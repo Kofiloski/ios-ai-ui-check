@@ -1,0 +1,209 @@
+name: iOS AI UI Check
+description: Plan or load a scenario, run the scaffolded app-side iOS simulator runner, record video, and report artifacts.
+
+inputs:
+  simulator-name:
+    description: Target simulator device name.
+    required: false
+    default: iPhone 17 Pro
+  simulator-runtime:
+    description: Target iOS Simulator runtime version, for example 26.2.
+    required: false
+    default: "26.2"
+  provided-scenario-path:
+    description: Optional explicit path to a checked-in scenario JSON file.
+    required: false
+    default: ""
+  planner-command:
+    description: Optional command that writes scenario JSON to AI_UI_SCENARIO_OUTPUT_PATH when no scenario file is provided.
+    required: false
+    default: ""
+  planner-goal:
+    description: Optional short sentence describing what the planner should verify.
+    required: false
+    default: ""
+  expected-screenshot-path:
+    description: Optional expected screenshot path.
+    required: false
+    default: ""
+  artifacts-dir:
+    description: Directory for generated artifacts.
+    required: false
+    default: artifacts/ios-ai-ui-check
+  upload-artifacts:
+    description: Upload the artifacts directory.
+    required: false
+    default: "true"
+  record-video:
+    description: Record simulator video while running the runner.
+    required: false
+    default: "true"
+  comment-on-pr:
+    description: Post a PR comment on pull_request events.
+    required: false
+    default: "true"
+  max-duration-seconds:
+    description: Runner execution timeout.
+    required: false
+    default: "300"
+
+outputs:
+  status:
+    description: passed or failed
+    value: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
+  resolved-source:
+    description: provided or ai when scenario resolution succeeded
+    value: ${{ steps.plan.outputs.resolved-source }}
+  failure-note:
+    description: High-level failure note when planning or runner execution failed
+    value: ${{ steps.run_check.outputs.failure-note || steps.plan.outputs.failure-note }}
+  scenario-path:
+    description: Resolved scenario path
+    value: ${{ steps.plan.outputs.scenario-path }}
+  summary-path:
+    description: Markdown summary path
+    value: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
+  video-path:
+    description: Video path when recording is enabled and a video file was captured
+    value: ${{ inputs.record-video == 'true' && steps.run_check.outputs.video-path || '' }}
+  artifact-url:
+    description: Uploaded artifact URL when available
+    value: ${{ steps.upload.outputs.artifact-url }}
+  before-planning-ui-tree-path:
+    description: UI tree path captured before AI planning when available
+    value: ${{ steps.plan.outputs.before-planning-ui-tree-path }}
+  before-planning-screenshot-path:
+    description: Screenshot path captured before AI planning when available
+    value: ${{ steps.plan.outputs.before-planning-screenshot-path }}
+  current-ui-tree-path:
+    description: Deprecated alias for before-planning-ui-tree-path
+    value: ${{ steps.plan.outputs.before-planning-ui-tree-path }}
+  current-screenshot-path:
+    description: Deprecated alias for before-planning-screenshot-path
+    value: ${{ steps.plan.outputs.before-planning-screenshot-path }}
+  planner-note-path:
+    description: Planner note path when AI planning emitted a note about a narrowed or safer route
+    value: ${{ steps.plan.outputs.planner-note-path }}
+  planner-request-path:
+    description: Planner request summary path when AI planning is attempted
+    value: ${{ steps.plan.outputs.planner-request-path }}
+  planner-response-path:
+    description: Planner response artifact path, preferring planner-response.json over planner-response.txt
+    value: ${{ steps.plan.outputs.planner-response-path }}
+  planner-validation-error-path:
+    description: Planner validation error path when AI planning produced an invalid or risky scenario
+    value: ${{ steps.plan.outputs.planner-validation-error-path }}
+  planner-summary-path:
+    description: Planner summary path when AI planning is attempted
+    value: ${{ steps.plan.outputs.planner-summary-path }}
+  artifact-manifest-path:
+    description: Machine-readable manifest of uploaded artifacts
+    value: ${{ steps.artifact_manifest.outputs.artifact-manifest-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure action scripts are executable
+      shell: bash
+      run: chmod +x "${{ github.action_path }}/scripts/"*.sh
+
+    - name: Resolve scenario
+      id: plan
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}
+        RUNNER_SCRIPT: ./scripts/run-ai-ui-scenario.sh
+        PROVIDED_SCENARIO_PATH: ${{ inputs.provided-scenario-path }}
+        PLANNER_COMMAND: ${{ inputs.planner-command }}
+        PLANNER_GOAL: ${{ inputs.planner-goal }}
+        EXPECTED_SCREENSHOT_PATH: ${{ inputs.expected-screenshot-path }}
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        SIMULATOR_NAME: ${{ inputs.simulator-name }}
+        SIMULATOR_RUNTIME: ${{ inputs.simulator-runtime }}
+        MAX_DURATION_SECONDS: ${{ inputs.max-duration-seconds }}
+      run: "${{ github.action_path }}/scripts/plan-scenario.sh"
+
+    - name: Run runner
+      id: run_check
+      if: ${{ steps.plan.outputs.status == 'passed' }}
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}
+        RUNNER_SCRIPT: ./scripts/run-ai-ui-scenario.sh
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        RECORD_VIDEO: ${{ inputs.record-video }}
+        SCENARIO_PATH: ${{ steps.plan.outputs.scenario-path }}
+        PLANNER_GOAL: ${{ steps.plan.outputs.resolved-source == 'ai' && inputs.planner-goal || '' }}
+        PLANNER_NOTE_PATH: ${{ steps.plan.outputs.planner-note-path }}
+        EXPECTED_SCREENSHOT_PATH: ${{ inputs.expected-screenshot-path }}
+        SIMULATOR_NAME: ${{ inputs.simulator-name }}
+        SIMULATOR_RUNTIME: ${{ inputs.simulator-runtime }}
+        MAX_DURATION_SECONDS: ${{ inputs.max-duration-seconds }}
+      run: "${{ github.action_path }}/scripts/run-check.sh"
+
+    - name: Write artifact manifest
+      id: artifact_manifest
+      if: ${{ always() }}
+      shell: bash
+      env:
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        STATUS: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
+        RESOLVED_SOURCE: ${{ steps.plan.outputs.resolved-source }}
+        FAILURE_NOTE: ${{ steps.run_check.outputs.failure-note || steps.plan.outputs.failure-note }}
+        SUMMARY_PATH: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
+        SCENARIO_PATH: ${{ steps.plan.outputs.scenario-path }}
+        VIDEO_PATH: ${{ steps.run_check.outputs.video-path }}
+        FAILURE_SCREENSHOT_PATH: ${{ inputs.artifacts-dir }}/failure-screenshot.png
+        BEFORE_PLANNING_UI_TREE_PATH: ${{ steps.plan.outputs.before-planning-ui-tree-path }}
+        BEFORE_PLANNING_SCREENSHOT_PATH: ${{ steps.plan.outputs.before-planning-screenshot-path }}
+        PLANNER_NOTE_PATH: ${{ steps.plan.outputs.planner-note-path }}
+        PLANNER_REQUEST_PATH: ${{ steps.plan.outputs.planner-request-path }}
+        PLANNER_RESPONSE_PATH: ${{ steps.plan.outputs.planner-response-path }}
+        PLANNER_VALIDATION_ERROR_PATH: ${{ steps.plan.outputs.planner-validation-error-path }}
+        PLANNER_SUMMARY_PATH: ${{ steps.plan.outputs.planner-summary-path }}
+      run: |
+        python3 "${{ github.action_path }}/scripts/write-artifact-manifest.py" \
+          --artifacts-dir "${ARTIFACTS_DIR}" \
+          --status "${STATUS}" \
+          --resolved-source "${RESOLVED_SOURCE}" \
+          --failure-note "${FAILURE_NOTE}" \
+          --summary-path "${SUMMARY_PATH}" \
+          --scenario-path "${SCENARIO_PATH}" \
+          --video-path "${VIDEO_PATH}" \
+          --failure-screenshot-path "${FAILURE_SCREENSHOT_PATH}" \
+          --before-planning-ui-tree-path "${BEFORE_PLANNING_UI_TREE_PATH}" \
+          --before-planning-screenshot-path "${BEFORE_PLANNING_SCREENSHOT_PATH}" \
+          --planner-note-path "${PLANNER_NOTE_PATH}" \
+          --planner-request-path "${PLANNER_REQUEST_PATH}" \
+          --planner-response-path "${PLANNER_RESPONSE_PATH}" \
+          --planner-validation-error-path "${PLANNER_VALIDATION_ERROR_PATH}" \
+          --planner-summary-path "${PLANNER_SUMMARY_PATH}"
+
+    - name: Upload artifacts
+      id: upload
+      if: ${{ always() && inputs.upload-artifacts == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: ios-ai-ui-check
+        path: |
+          ${{ inputs.artifacts-dir }}
+          !${{ inputs.artifacts-dir }}/**/*.sb-*
+        if-no-files-found: warn
+        retention-days: 7
+
+    - name: Comment on PR
+      if: ${{ always() && inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        STATUS: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
+        SUMMARY_PATH: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        ARTIFACT_NAME: ios-ai-ui-check
+      run: "${{ github.action_path }}/scripts/post-pr-comment.sh"
+
+    - name: Fail action on runner failure
+      if: ${{ (steps.run_check.outputs.status || steps.plan.outputs.status) != 'passed' }}
+      shell: bash
+      run: |
+        echo "AI UI check failed. Review the uploaded artifacts for details."
+        exit 1

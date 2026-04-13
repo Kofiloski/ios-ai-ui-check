@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ios-ai-ui-check/scenario.schema.json",
+  "title": "iOS AI UI Check Scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "steps"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "launch",
+              "tap",
+              "type",
+              "wait",
+              "assertVisible",
+              "assertText",
+              "screenshot"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "seconds": {
+            "type": "number"
+          },
+          "wait_seconds": {
+            "type": "number"
+          },
+          "timeout": {
+            "type": "number"
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

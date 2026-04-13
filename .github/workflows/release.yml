@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: Semantic version tag to create, for example v0.3.0
+        required: true
+        type: string
+      update_major_tag:
+        description: Also force-update the moving major tag, for example v0
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        id: version
+        shell: bash
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: |
+          if [[ ! "${VERSION_TAG}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "version_tag must match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+
+          echo "major_tag=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run release readiness
+        shell: bash
+        run: ./scripts/check-release-readiness.sh
+
+      - name: Configure git author
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release tag
+        shell: bash
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
+            echo "Tag already exists locally: ${VERSION_TAG}" >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists on origin: ${VERSION_TAG}" >&2
+            exit 1
+          fi
+
+          git tag -a "${VERSION_TAG}" -m "Release ${VERSION_TAG}"
+          git push origin "refs/tags/${VERSION_TAG}"
+
+      - name: Update moving major tag
+        if: ${{ inputs.update_major_tag }}
+        shell: bash
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+          MAJOR_TAG: ${{ steps.version.outputs.major_tag }}
+        run: |
+          git tag -fa "${MAJOR_TAG}" -m "Release ${VERSION_TAG}"
+          git push origin "refs/tags/${MAJOR_TAG}" --force
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: |
+          gh release create "${VERSION_TAG}" \
+            --title "${VERSION_TAG}" \
+            --generate-notes

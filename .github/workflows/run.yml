@@ -1,0 +1,207 @@
+name: iOS AI UI Check
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: GitHub-hosted macOS runner label.
+        required: false
+        type: string
+        default: macos-26
+      simulator-name:
+        description: Target simulator device name.
+        required: false
+        type: string
+        default: iPhone 17 Pro
+      simulator-runtime:
+        description: Target iOS Simulator runtime version, for example 26.2.
+        required: false
+        type: string
+        default: "26.2"
+      provided-scenario-path:
+        description: Optional explicit path to a checked-in scenario JSON file.
+        required: false
+        type: string
+        default: ""
+      planner-command:
+        description: Optional command that writes scenario JSON to AI_UI_SCENARIO_OUTPUT_PATH when no scenario file is provided.
+        required: false
+        type: string
+        default: ""
+      planner-goal:
+        description: Optional short sentence describing what the planner should verify.
+        required: false
+        type: string
+        default: ""
+      expected-screenshot-path:
+        description: Optional expected screenshot path.
+        required: false
+        type: string
+        default: ""
+      artifacts-dir:
+        description: Directory for generated artifacts.
+        required: false
+        type: string
+        default: artifacts/ios-ai-ui-check
+      upload-artifacts:
+        description: Upload the artifacts directory.
+        required: false
+        type: boolean
+        default: true
+      record-video:
+        description: Record simulator video while running the runner.
+        required: false
+        type: boolean
+        default: true
+      comment-on-pr:
+        description: Post a PR comment on pull_request events.
+        required: false
+        type: boolean
+        default: true
+      max-duration-seconds:
+        description: Runner execution timeout.
+        required: false
+        type: string
+        default: "300"
+      planner-api-key-env-name:
+        description: Environment variable name used to expose the optional planner API key secret to the planner command.
+        required: false
+        type: string
+        default: OPENAI_API_KEY
+    secrets:
+      github-token:
+        required: false
+      planner-api-key:
+        required: false
+    outputs:
+      status:
+        description: passed or failed
+        value: ${{ jobs.ai-ui-check.outputs.status }}
+      resolved-source:
+        description: provided or ai when scenario resolution succeeded
+        value: ${{ jobs.ai-ui-check.outputs.resolved-source }}
+      failure-note:
+        description: High-level failure note when planning or runner execution failed
+        value: ${{ jobs.ai-ui-check.outputs.failure-note }}
+      scenario-path:
+        description: Resolved scenario path
+        value: ${{ jobs.ai-ui-check.outputs.scenario-path }}
+      summary-path:
+        description: Markdown summary path
+        value: ${{ jobs.ai-ui-check.outputs.summary-path }}
+      video-path:
+        description: Video path when recording is enabled and a video file was captured
+        value: ${{ jobs.ai-ui-check.outputs.video-path }}
+      artifact-url:
+        description: Uploaded artifact URL when available
+        value: ${{ jobs.ai-ui-check.outputs.artifact-url }}
+      before-planning-ui-tree-path:
+        description: UI tree path captured before AI planning when available
+        value: ${{ jobs.ai-ui-check.outputs.before-planning-ui-tree-path }}
+      before-planning-screenshot-path:
+        description: Screenshot path captured before AI planning when available
+        value: ${{ jobs.ai-ui-check.outputs.before-planning-screenshot-path }}
+      current-ui-tree-path:
+        description: Deprecated alias for before-planning-ui-tree-path
+        value: ${{ jobs.ai-ui-check.outputs.current-ui-tree-path }}
+      current-screenshot-path:
+        description: Deprecated alias for before-planning-screenshot-path
+        value: ${{ jobs.ai-ui-check.outputs.current-screenshot-path }}
+      planner-note-path:
+        description: Planner note path when AI planning emitted a note about a narrowed or safer route
+        value: ${{ jobs.ai-ui-check.outputs.planner-note-path }}
+      planner-request-path:
+        description: Planner request summary path when AI planning is attempted
+        value: ${{ jobs.ai-ui-check.outputs.planner-request-path }}
+      planner-response-path:
+        description: Planner response artifact path
+        value: ${{ jobs.ai-ui-check.outputs.planner-response-path }}
+      planner-validation-error-path:
+        description: Planner validation error path when AI planning produced an invalid or risky scenario
+        value: ${{ jobs.ai-ui-check.outputs.planner-validation-error-path }}
+      planner-summary-path:
+        description: Planner summary path when AI planning is attempted
+        value: ${{ jobs.ai-ui-check.outputs.planner-summary-path }}
+      artifact-manifest-path:
+        description: Machine-readable manifest of uploaded artifacts
+        value: ${{ jobs.ai-ui-check.outputs.artifact-manifest-path }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-ui-check:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      status: ${{ steps.run_action.outputs.status }}
+      resolved-source: ${{ steps.run_action.outputs.resolved-source }}
+      failure-note: ${{ steps.run_action.outputs.failure-note }}
+      scenario-path: ${{ steps.run_action.outputs.scenario-path }}
+      summary-path: ${{ steps.run_action.outputs.summary-path }}
+      video-path: ${{ steps.run_action.outputs.video-path }}
+      artifact-url: ${{ steps.run_action.outputs.artifact-url }}
+      before-planning-ui-tree-path: ${{ steps.run_action.outputs.before-planning-ui-tree-path }}
+      before-planning-screenshot-path: ${{ steps.run_action.outputs.before-planning-screenshot-path }}
+      current-ui-tree-path: ${{ steps.run_action.outputs.current-ui-tree-path }}
+      current-screenshot-path: ${{ steps.run_action.outputs.current-screenshot-path }}
+      planner-note-path: ${{ steps.run_action.outputs.planner-note-path }}
+      planner-request-path: ${{ steps.run_action.outputs.planner-request-path }}
+      planner-response-path: ${{ steps.run_action.outputs.planner-response-path }}
+      planner-validation-error-path: ${{ steps.run_action.outputs.planner-validation-error-path }}
+      planner-summary-path: ${{ steps.run_action.outputs.planner-summary-path }}
+      artifact-manifest-path: ${{ steps.run_action.outputs.artifact-manifest-path }}
+    steps:
+      - name: Resolve action repository and ref
+        id: self
+        shell: bash
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          echo "repository=${WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${WORKFLOW_REF#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Checkout action repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.self.outputs.repository }}
+          ref: ${{ steps.self.outputs.ref }}
+          path: _action
+
+      - name: Export planner API key for planner command
+        if: ${{ secrets['planner-api-key'] != '' }}
+        shell: bash
+        env:
+          PLANNER_API_KEY: ${{ secrets['planner-api-key'] }}
+          PLANNER_API_KEY_ENV_NAME: ${{ inputs.planner-api-key-env-name }}
+        run: |
+          if [[ -z "${PLANNER_API_KEY_ENV_NAME}" ]]; then
+            echo "planner-api-key-env-name must not be empty when planner-api-key is provided" >&2
+            exit 1
+          fi
+
+          echo "::add-mask::${PLANNER_API_KEY}"
+          printf '%s=%s\n' "${PLANNER_API_KEY_ENV_NAME}" "${PLANNER_API_KEY}" >> "$GITHUB_ENV"
+
+      - name: Run AI UI validation
+        id: run_action
+        uses: ./_action
+        with:
+          simulator-name: ${{ inputs.simulator-name }}
+          simulator-runtime: ${{ inputs.simulator-runtime }}
+          provided-scenario-path: ${{ inputs.provided-scenario-path != '' && format('repo/{0}', inputs.provided-scenario-path) || '' }}
+          planner-command: ${{ inputs.planner-command }}
+          planner-goal: ${{ inputs.planner-goal }}
+          expected-screenshot-path: ${{ inputs.expected-screenshot-path != '' && format('repo/{0}', inputs.expected-screenshot-path) || '' }}
+          artifacts-dir: ${{ inputs.artifacts-dir }}
+          upload-artifacts: ${{ inputs.upload-artifacts }}
+          record-video: ${{ inputs.record-video }}
+          comment-on-pr: ${{ inputs.comment-on-pr }}
+          max-duration-seconds: ${{ inputs.max-duration-seconds }}
+        env:
+          GITHUB_TOKEN: ${{ secrets['github-token'] || github.token }}
