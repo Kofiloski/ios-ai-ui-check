@@ -362,6 +362,8 @@ For the most common maintenance loop, use:
 ./scripts/check-maintenance.sh
 ```
 
+The same maintenance suite also runs automatically on every branch push and pull request through [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 Before cutting a release tag, use:
 
 ```bash

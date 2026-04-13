@@ -78,6 +78,8 @@ For the common maintenance path, use:
 ./scripts/check-maintenance.sh
 ```
 
+That same script now runs automatically on every branch push and pull request through `.github/workflows/ci.yml`.
+
 Before cutting a reusable-repo release, use:
 
 ```bash
