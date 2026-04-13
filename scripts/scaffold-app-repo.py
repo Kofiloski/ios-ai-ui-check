@@ -280,6 +280,12 @@ def resolve_project_path(repo_root: Path, explicit_project: Path | None) -> Path
 
 
 def load_project(project_file: Path) -> tuple[dict, bytes]:
+    project_bytes = project_file.read_bytes()
+    try:
+        return plistlib.loads(project_bytes), project_bytes
+    except plistlib.InvalidFileException:
+        pass
+
     completed = subprocess.run(
         ["plutil", "-convert", "xml1", "-o", "-", str(project_file)],
         check=True,

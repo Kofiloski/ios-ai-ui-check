@@ -140,6 +140,16 @@ class ScaffoldAppRepoTests(unittest.TestCase):
 
         self.assertEqual(slug, "owner/ios-ai-ui-check")
 
+    def test_load_project_parses_xml_fixture_without_plutil(self) -> None:
+        project_file = FIXTURE_APP_ROOT / "FixtureApp.xcodeproj" / "project.pbxproj"
+
+        with unittest.mock.patch.object(scaffold_app_repo.subprocess, "run") as mock_run:
+            plist, original_project_xml = scaffold_app_repo.load_project(project_file)
+
+        mock_run.assert_not_called()
+        self.assertEqual(plist["archiveVersion"], "1")
+        self.assertEqual(original_project_xml, project_file.read_bytes())
+
     def test_scaffold_fixture_app_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp) / "FixtureApp"
