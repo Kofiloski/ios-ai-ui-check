@@ -37,7 +37,7 @@ Generated workflows support a repository variable named `IOS_AI_UI_CHECK_REF`.
 
 Set it to one of:
 
-- a release tag such as `v0.2.0`
+- a release tag such as `v0.3.0`
 - a moving major tag such as `v0`
 - a commit SHA when you want a one-off hotfix pin
 

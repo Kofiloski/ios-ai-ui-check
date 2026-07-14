@@ -1,0 +1,15 @@
+name: iOS UI Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ui-check:
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.3.0
+    with:
+      provided-scenario-path: .github/ai-ui/verify-primary-flow.json

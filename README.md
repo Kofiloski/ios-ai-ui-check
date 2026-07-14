@@ -1,97 +1,129 @@
 # ios-ai-ui-check
 
-`ios-ai-ui-check` is a GitHub Action for running UI validation against an iOS Simulator inside CI.
+[![CI](https://github.com/Kofiloski/ios-ai-ui-check/actions/workflows/ci.yml/badge.svg)](https://github.com/Kofiloski/ios-ai-ui-check/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Kofiloski/ios-ai-ui-check)](https://github.com/Kofiloski/ios-ai-ui-check/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-It is designed for teams that already build their app and run tests on a macOS runner, and want to add one more step that:
+Turn an app-owned `XCUITest` flow into a reviewable pull-request check: run it on iOS Simulator, preserve the evidence, and keep one managed PR summary up to date.
 
-- uses AI planning by default in the scaffolded setup, with a checked-in scenario still available as an override
-- boots a target simulator
-- runs the scaffolded app-side runner
-- records video
-- uploads artifacts
-- optionally posts a pull request summary
+`ios-ai-ui-check` is a reusable GitHub Action plus a deterministic app-repo scaffold. It gives you:
 
-The action is intentionally split into a generic public layer and an app-specific local layer. The action handles orchestration. The app repo handles app launch, state seeding, UI interactions, and assertions. This repo also ships a scaffold script that can generate the baseline app-side files, including a UI test target when one does not already exist. The scaffolded planner defaults to OpenAI through `OPENAI_API_KEY`, but the core action remains provider-agnostic.
+- checked-in JSON scenarios for repeatable checks, or an optional planner command for goal-driven scenarios
+- canonical scenario validation before the final scenario runner starts
+- video, screenshots, logs, `.xcresult`, failure evidence, and a machine-readable artifact manifest
+- a PR comment that links the artifact bundle and embeds the runner's real `summary.md`
+- controlled failure artifacts when planning or execution fails, instead of a bare red check
 
-## Why This Exists
+The reusable action owns orchestration and evidence. Your app repo keeps control of launch state, data seeding, accessibility identifiers, UI interactions, and assertions.
 
-The hard part of reusable iOS UI automation is not video capture or artifact upload. It is app-specific execution:
+## Start With A Deterministic Check
 
-- how the app gets seeded
-- how authentication is bypassed or configured for CI
-- which accessibility identifiers exist
-- which deep links or launch arguments are available
-- how final assertions should be expressed
+First scaffold the app-owned runner and scenario from a local checkout:
 
-That logic does not belong in the action. This repo keeps the reusable plumbing public and leaves app behavior in a repo-local runner script or scaffolded `XCUITest` runner inside the app repo.
+```bash
+git clone --branch v0.3.0 --depth 1 \
+  https://github.com/Kofiloski/ios-ai-ui-check.git ../ios-ai-ui-check
 
-## Execution Model
+python3 ../ios-ai-ui-check/scripts/scaffold-app-repo.py \
+  --repo-root . \
+  --project App.xcodeproj \
+  --scheme App
 
-There are two supported scenario sources:
+./scripts/local-ai-ui-check.sh --use-example-scenario
+```
 
-- a checked-in scenario JSON file
-- a planner command that writes scenario JSON
+The scaffold writes a fuller manual and label-triggered workflow. If you prefer the smallest explicit deterministic caller, copy this after reviewing the generated scenario:
 
-Both paths must produce the same scenario shape. The action resolves them implicitly:
+```yaml
+name: iOS UI Check
 
-1. if a checked-in scenario file is available, use it
-2. otherwise, if a planner command is provided, generate one with AI
-3. otherwise, fail
+on:
+  workflow_dispatch:
+  pull_request:
 
-High-level flow:
+permissions:
+  contents: read
+  pull-requests: write
 
-1. If AI planning is needed, inspect the current app state and capture a live hierarchy snapshot plus screenshot.
-2. Resolve the scenario.
-3. Boot the requested simulator.
-4. Start simulator video recording.
-5. Invoke the app repo's runner script.
-6. Stop recording.
-7. Upload artifacts.
-8. Optionally comment on the PR.
+jobs:
+  ui-check:
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.3.0
+    with:
+      provided-scenario-path: .github/ai-ui/verify-primary-flow.json
+```
 
-If planning fails before the runner starts, the action still uploads a top-level `summary.md` plus planner-side debugging artifacts instead of aborting before upload. The uploaded bundle also includes `manifest.json`, a machine-readable artifact index.
+This path does not call a model or require an API key. When GitHub restricts the default token on a fork or Dependabot pull request, the optional managed comment is skipped without failing the UI check; artifacts and the job summary still carry the evidence. A caller-provided writable `github-token` remains supported. Pin to a commit SHA instead of a release tag if your dependency policy requires immutable source references. A copyable version of the workflow lives in [`examples/deterministic-pr-check.yml`](examples/deterministic-pr-check.yml).
 
-## Requirements
+## Review Evidence, Not Just A Status Dot
 
-The action assumes:
+The managed PR comment uses the actual action status, artifact URL, and app-runner summary. Its rendered shape is:
 
-- the workflow runs on a macOS runner
-- Xcode and Simulator tools are available on that runner
-- the app repo provides a runner script or uses the scaffold script in this repo to generate one
-- the app repo can build, install, and launch the app in CI
+```md
+## iOS AI UI Check
 
-If you want `runner` to be configurable, use the reusable workflow wrapper in [`.github/workflows/run.yml`](.github/workflows/run.yml). A GitHub Action step cannot control `runs-on`.
+Status: `passed`
 
-## What The App Repo Must Provide
+Artifact: [ios-ai-ui-check](https://github.com/.../actions/runs/.../artifacts/...)
 
-This action is designed to be as plug-and-play as iOS allows, but native iOS automation still needs a small app-side surface.
+## iOS AI UI Check
 
-Required:
+- Scenario: Verify primary flow
+- Result: passed
+- Simulator: iPhone 17 Pro / iOS 26.2 (...)
+- Log: xcodebuild-ui-test.log
+- Result bundle: AppUITests.xcresult
+```
 
-- a buildable iOS app that can run on a macOS GitHub Actions runner
-- a simulator destination that exists on that runner
-- a deterministic app launch path for testing
-- examples of deterministic launch paths: launch arguments, deep links, seeded fixtures, mocked services, or a test account
-- a way to identify the UI that the scenario needs to interact with
-- best results come from accessibility identifiers on important controls and assertions
-- either a checked-in scenario file or a planner command
+By default, the linked bundle can contain:
 
-Recommended:
+```text
+summary.md
+manifest.json
+scenario.json
+run.mp4                         # when recording finalizes successfully
+failure-screenshot.png          # when XCTest provides a failure attachment
+<UITestTarget>.xcresult/
+xcodebuild-ui-test.log
+inspect/                         # before-planning screenshot and UI tree
+planner-*                        # request, response, validation, and summary evidence
+```
 
-- an `XCUITest` target behind the scaffolded runner
-- stable accessibility identifiers for all tappable and asserted UI in the tested flow
-- test-only hooks for auth bypass, data seeding, and route selection
-- mocked or seeded network state so the scenario is repeatable
-- an expected screenshot when visual end state matters
+`manifest.json` indexes the files that actually exist, so downstream tooling does not need to scrape Markdown or assume every optional artifact was produced. Planner failures still preserve a top-level summary and planner diagnostics before the action reports failure.
 
-In practice, the smallest reliable app repo setup is usually:
+## How The Boundary Works
 
-1. use the scaffolded repo-local runner
-2. have that script invoke an `XCUITest` target
-3. use launch arguments or deep links to place the app in known state
-4. add accessibility identifiers only to the flow you want to validate
+```mermaid
+flowchart LR
+  Provided["Checked-in scenario"] --> Validate["Canonical validation"]
+  Goal["Planner goal"] --> Inspect["Live UI inspect"]
+  Inspect --> Planner["App-owned planner command"]
+  Planner --> Validate
+  Validate --> Simulator["Boot Simulator + record video"]
+  Simulator --> Runner["App-owned XCUITest runner"]
+  Runner --> Evidence["Summary + manifest + media + logs + xcresult"]
+  Evidence --> Review["Artifact upload + managed PR comment"]
+```
 
-The action owns simulator boot, video capture, screenshots, artifact upload, and PR reporting. The app repo still owns app launch, state setup, UI interaction, and assertions.
+The composite action does not call an AI provider. A checked-in scenario stays fully deterministic. On the optional AI path, the reusable workflow can expose a planner secret, but only the `planner-command` supplied by the app repo consumes it. That command chooses the provider and exactly what context leaves the runner. The generated planner is an OpenAI-backed example and can receive the inspected screenshot, UI tree, planner context, and discovered UI identifiers, so review it before adding credentials. Replace it with another provider or a local planner without changing the action contract.
+
+## Companion Tools
+
+- [`ios-ui-testability-contract-skill`](https://github.com/Kofiloski/ios-ui-testability-contract-skill) diagnoses and repairs app-side identifier, element-exposure, and deterministic-routing failures when a UI check cannot reach the intended control.
+- [`app-store-review-risk`](https://github.com/Kofiloski/app-store-review-risk) scans Apple-platform repos for likely App Review, privacy, entitlement, StoreKit, metadata, and submission risks.
+
+The action remains intentionally narrower than either companion: it runs and reports UI scenarios, while app testability and submission policy stay in their dedicated tools.
+
+For agent and catalog ingestion, [`llms.txt`](llms.txt) provides a compact map of the contracts, examples, and verification commands.
+
+## What The App Repo Must Own
+
+- a buildable `.xcodeproj` with a shared scheme and a Simulator destination available on the selected macOS runner
+- deterministic launch state through arguments, environment, deep links, fixtures, mocks, or a test account
+- stable accessibility identifiers for controls and assertions in the intended flow
+- an app-owned runner, normally the scaffolded `XCUITest` target and shell wrapper
+- either a checked-in scenario or a planner command that emits the same provider-neutral scenario JSON
+
+If you need the macOS runner to be configurable, use the reusable workflow wrapper in [`.github/workflows/run.yml`](.github/workflows/run.yml). A composite action step cannot choose `runs-on`.
 
 ## Bootstrap An App Repo
 
@@ -217,13 +249,9 @@ python3 scripts/refresh-scaffold.py --repo-root /path/to/app-repo --check --json
 
 For new repo setup, release pinning, safe refresh rollout, and the machine-readable artifact index, see [docs/adoption-checklist.md](docs/adoption-checklist.md), [docs/releases.md](docs/releases.md), and [docs/artifact-manifest.md](docs/artifact-manifest.md).
 
-## Quick Start
+## Configure The Generated Integration
 
-### 1. Scaffold The App Repo
-
-The recommended path is to run [`scripts/scaffold-app-repo.py`](scripts/scaffold-app-repo.py). If you already have your own runner, keep it and satisfy the contract in [docs/runner-contract.md](docs/runner-contract.md).
-
-### 2. Review The Generated Planner Context
+### 1. Review The Generated Planner Context
 
 The scaffolded runner is generic. Review both the checked-in scenario example and `.github/ai-ui/planner-context.md`. The default AI planner becomes much more reliable once you describe the app's deterministic launch settings, preferred flow, and stable IDs there.
 
@@ -235,14 +263,14 @@ That screenshot is written as `inspect/before-planning-screenshot.png`, and the 
 When planning fails, the uploaded artifact still includes `summary.md`, `planner-summary.md`, `planner-request.md`, the raw planner response as `planner-response.json` or `planner-response.txt`, and `planner-validation-error.txt` when contract validation rejected the generated scenario. The generated planner now writes a raw draft scenario JSON before app-specific validation, so rejected scenarios remain inspectable in `planner-response.json` instead of disappearing into stderr. The artifact root also includes `manifest.json`, which enumerates the primary planner, inspect, media, and summary artifacts for downstream tooling.
 Keep expectations realistic: XCUITest on Simulator is much slower than unit tests, and the hierarchy snapshot is debugging context for planning rather than a stable assertion source.
 
-### 3. Use The Action After Your Existing Build/Test Steps
+### 2. Use The Action After Your Existing Build/Test Steps
 
-The examples below use `OWNER_OR_ORG/ios-ai-ui-check@main` for immediate setup. Replace `OWNER_OR_ORG` with the published repository owner. For a stable integration, pin to a tag or commit SHA before making it a required check.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.3.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 The scaffolded workflow supports both `workflow_dispatch` and opt-in `pull_request` runs. On PRs, it runs only when the `ai-ui-check` label is present and the scaffolded planner defaults to a PR-aware goal sentence.
 
 The generated workflow keeps the manual GitHub form fairly narrow. It exposes `planner_goal` plus the technical knobs `simulator_name`, `simulator_runtime`, and `planner_model`. `planner_goal` maps to `AI_UI_PLANNER_GOAL`, so maintainers can ask for goals like `test adding an ingredient` without hand-authoring scenario JSON. When a planner goal is used, the action persists the exact goal text into `summary.md`, and the scaffolded planner can also emit a short `Planner Note` when it intentionally narrows a requested conditional-state path into a safer deterministic route. If the runner attached XCTest's `Failure Screenshot`, the action also extracts it from `.xcresult` into `failure-screenshot.png` before uploading artifacts. On pull requests, the action updates a single managed comment instead of posting a fresh new comment on every run, and it truncates oversized summaries instead of letting GitHub reject the whole update.
 The lower-level action still supports further overrides such as checked-in scenarios and expected screenshots. The scaffolded workflow just does not surface those as `workflow_dispatch` form fields. If you need them, edit the workflow YAML directly or call the action from a custom workflow.
-The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.2.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
+The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.3.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
 
 #### AI-Planned Scenario
 
@@ -252,7 +280,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: OWNER_OR_ORG/ios-ai-ui-check@main
+  uses: Kofiloski/ios-ai-ui-check@v0.3.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
     planner-goal: test adding an ingredient
@@ -270,7 +298,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: OWNER_OR_ORG/ios-ai-ui-check@main
+  uses: Kofiloski/ios-ai-ui-check@v0.3.0
   with:
     provided-scenario-path: .github/ai-ui/detail-screen.json
     simulator-name: iPhone 17 Pro
@@ -408,7 +436,7 @@ Example with OpenAI:
 
 ```yaml
 - name: UI validation
-  uses: OWNER_OR_ORG/ios-ai-ui-check@main
+  uses: Kofiloski/ios-ai-ui-check@v0.3.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
   env:
@@ -466,23 +494,25 @@ Use the core action directly when you want to plug into an existing job. Use the
 ```text
 action.yml
 .github/workflows/run.yml
+CITATION.cff
+llms.txt
+examples/
 scripts/
 templates/
 schemas/
 docs/
 ```
 
+- `action.yml`: composite-action contract plus GitHub Marketplace metadata
+- `examples/`: copyable post-scaffold workflow callers
 - `scripts/`: shell entry points used by the public action plus the deterministic scaffold generator
 - `templates/`: `.tpl` source files rendered by the scaffold generator into an app repo; they are not executed directly
 - `schemas/`: reference JSON schemas for scenario payloads
 - `docs/`: durable architecture and runner contract notes
+- `llms.txt` and `CITATION.cff`: agent-readable discovery and citation metadata
 
-## Publish Checklist
+## Releases And Citation
 
-Before publishing:
+Use immutable semantic tags such as `v0.3.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
 
-- choose a license
-- create the GitHub repository
-- push this code
-- tag `v1`
-- replace `@main` in examples with a tag or pinned commit SHA
+The project is MIT licensed. If you reference it in research, documentation, or a tool catalog, use [`CITATION.cff`](CITATION.cff) for the current citation metadata.

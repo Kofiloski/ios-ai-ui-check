@@ -21,8 +21,18 @@ class ReusableWorkflowContractTests(unittest.TestCase):
         self.assertIn("upload-artifacts:", workflow_text)
         self.assertIn("record-video:", workflow_text)
         self.assertIn("max-duration-seconds:", workflow_text)
-        self.assertIn("github-token: ${{ secrets['github-token'] || github.token }}", workflow_text)
+        self.assertIn("github-token: ${{ secrets['github-token'] }}", workflow_text)
         self.assertIn("comment-author-login: ${{ inputs.comment-author-login }}", workflow_text)
+
+        action_text = (REPO_ROOT / "action.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "GITHUB_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN || github.token }}",
+            action_text,
+        )
+        self.assertIn("AI_UI_DEFAULT_GITHUB_TOKEN:", action_text)
+        self.assertIn("inputs.github-token == github.token", action_text)
+        self.assertIn("env.GITHUB_TOKEN == github.token", action_text)
+        self.assertIn("scripts/write-job-summary.py", action_text)
 
     def test_checks_out_caller_at_workspace_root_with_history(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

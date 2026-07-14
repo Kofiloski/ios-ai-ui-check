@@ -14,6 +14,263 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "post-pr-comment.sh"
 
 
 class PostPRCommentScriptTests(unittest.TestCase):
+    def test_comments_on_same_repository_pr_when_repository_is_a_fork(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            curl_marker = root / "curl-called"
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    {
+                        "pull_request": {
+                            "number": 5,
+                            "user": {"login": "maintainer"},
+                            "head": {
+                                "repo": {
+                                    "full_name": "owner/repo",
+                                    "fork": True,
+                                }
+                            },
+                            "base": {"repo": {"full_name": "owner/repo"}},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    for arg in "$@"; do
+                      if [[ "$arg" == *"?per_page=100&page=1" ]]; then
+                        printf '[]'
+                        exit 0
+                      fi
+                    done
+
+                    touch "$FAKE_CURL_MARKER"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "writable-token",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "FAKE_CURL_MARKER": str(curl_marker),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(curl_marker.exists())
+
+    def test_tolerates_default_token_denial_for_fork_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            curl_marker = root / "curl-called"
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    {
+                        "pull_request": {
+                            "number": 6,
+                            "user": {"login": "contributor"},
+                            "head": {
+                                "repo": {
+                                    "full_name": "contributor/fork",
+                                    "fork": True,
+                                }
+                            },
+                            "base": {"repo": {"full_name": "owner/repo"}},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    previous=""
+                    for arg in "$@"; do
+                      if [[ "$previous" == "-D" ]]; then
+                        printf 'HTTP/2 403 Forbidden\n' > "$arg"
+                      fi
+                      previous="$arg"
+                    done
+                    touch "$FAKE_CURL_MARKER"
+                    exit 22
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "read-only-token",
+                    "AI_UI_DEFAULT_GITHUB_TOKEN": "true",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "FAKE_CURL_MARKER": str(curl_marker),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(curl_marker.exists())
+            self.assertIn("default token", result.stdout)
+
+    def test_uses_explicit_writable_token_for_fork_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            curl_marker = root / "curl-called"
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    {
+                        "pull_request": {
+                            "number": 8,
+                            "user": {"login": "contributor"},
+                            "head": {"repo": {"full_name": "contributor/fork"}},
+                            "base": {"repo": {"full_name": "owner/repo"}},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    for arg in "$@"; do
+                      if [[ "$arg" == *"?per_page=100&page=1" ]]; then
+                        printf '[]'
+                        exit 0
+                      fi
+                    done
+
+                    touch "$FAKE_CURL_MARKER"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "explicit-writable-token",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "FAKE_CURL_MARKER": str(curl_marker),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(curl_marker.exists())
+
+    def test_fails_when_explicit_token_is_denied_on_fork_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    {
+                        "pull_request": {
+                            "number": 10,
+                            "user": {"login": "contributor"},
+                            "head": {"repo": {"full_name": "contributor/fork"}},
+                            "base": {"repo": {"full_name": "owner/repo"}},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    previous=""
+                    for arg in "$@"; do
+                      if [[ "$previous" == "-D" ]]; then
+                        printf 'HTTP/2 403 Forbidden\n' > "$arg"
+                      fi
+                      previous="$arg"
+                    done
+                    exit 22
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "explicit-invalid-token",
+                    "AI_UI_DEFAULT_GITHUB_TOKEN": "false",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("lookup failed", result.stderr)
+
     def test_updates_existing_managed_comment_with_rendered_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

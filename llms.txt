@@ -1,0 +1,75 @@
+# ios-ai-ui-check
+
+> Provider-neutral GitHub Action and deterministic scaffold for running app-owned iOS Simulator UI scenarios, preserving review evidence, and maintaining one pull-request summary.
+
+Canonical repository: https://github.com/Kofiloski/ios-ai-ui-check
+Latest documented release: v0.3.0
+License: MIT
+
+## Use this project when
+
+- an iOS app needs a repeatable Simulator UI smoke check in GitHub Actions;
+- a checked-in JSON scenario or app-owned planner should drive a scaffolded XCUITest runner;
+- reviewers need summary.md, manifest.json, video, screenshots, logs, xcresult, and planner diagnostics from one run;
+- multiple app repos should share orchestration without sharing app-specific launch or assertion logic.
+
+Do not put app-specific state seeding, credentials, deep links, accessibility IDs, or assertions in this repository. Those belong in each consuming app repo.
+
+## Start here
+
+- README.md: value proposition, first integration, evidence, and trust boundary.
+- docs/adoption-checklist.md: minimum app-repo adoption checklist.
+- docs/architecture.md: public-action versus app-repo ownership.
+- docs/runner-contract.md: environment, scenario, and summary contract for runners.
+- docs/integration-patterns.md: manual, pull-request, existing-CI, and reusable-workflow patterns.
+- docs/artifact-manifest.md: stable manifest keys for downstream consumers.
+- docs/releases.md: release pinning and scaffold upgrade policy.
+- examples/deterministic-pr-check.yml: smallest post-scaffold workflow with no model dependency.
+
+## Core behavior
+
+1. Resolve a provided scenario, or optionally inspect the live UI and invoke the app-owned planner command.
+2. Validate the provider-neutral scenario contract before running it.
+3. Boot the requested Simulator and optionally record video.
+4. Execute the app repo's scripts/run-ai-ui-scenario.sh runner.
+5. Preserve summary, scenario, media, logs, XCTest result bundles, and failure evidence.
+6. Write manifest.json, upload the artifact directory, and optionally update a managed PR comment.
+
+The checked-in scenario path does not invoke a model or require an API key. The public action never calls an AI provider directly. On the optional planning path, the app-owned planner command selects the provider and controls what context is sent. The generated scaffold includes an OpenAI-backed planner as a replaceable example.
+
+## Scenario contract
+
+The canonical implementation is scripts/ai_ui_contract.py; schemas/scenario.schema.json is generated from it. Supported actions are launch, tap, type, wait, assertVisible, assertText, and screenshot. Unknown fields and invalid action-specific values are rejected.
+
+The app-side runner receives paths and Simulator details through AI_UI_* environment variables. Read docs/runner-contract.md before changing that boundary.
+
+## Scaffold and local verification
+
+```bash
+python3 scripts/scaffold-app-repo.py \
+  --repo-root /path/to/app-repo \
+  --project App.xcodeproj \
+  --scheme App
+
+cd /path/to/app-repo
+./scripts/local-ai-ui-check.sh --use-example-scenario
+```
+
+The scaffold is deterministic and does not use an AI agent. Review the generated planner context, scenario, workflow, and launch settings before relying on them.
+
+## Repository verification
+
+```bash
+./scripts/check-maintenance.sh
+docs-list . --strict
+git diff --check
+```
+
+Use ./scripts/check-release-readiness.sh before publishing a release.
+
+## Companion projects
+
+- iOS UI Testability Contract: https://github.com/Kofiloski/ios-ui-testability-contract-skill
+  Use it to diagnose missing or duplicate identifiers, wrong element exposure, container collisions, and nondeterministic routes.
+- App Store Review Risk: https://github.com/Kofiloski/app-store-review-risk
+  Use it to preflight Apple-platform repositories for likely submission, privacy, entitlement, StoreKit, and metadata risks.

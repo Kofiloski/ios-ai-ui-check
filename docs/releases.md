@@ -15,12 +15,12 @@ This repo now includes `.github/workflows/release.yml` so the release process is
 
 Use semantic tags:
 
-- immutable release tags such as `v0.2.0`
+- immutable release tags such as `v0.3.0`
 - a moving major tag such as `v0`
 
 That gives consuming repos two stable upgrade modes:
 
-- conservative pin: `v0.2.0`
+- conservative pin: `v0.3.0`
 - opt into compatible updates: `v0`
 
 Use a commit SHA only for temporary hotfix pinning or debugging.
@@ -57,10 +57,10 @@ python3 scripts/refresh-scaffold.py --repo-root /path/to/app-repo --dry-run
 Before cutting a tag, run:
 
 ```bash
-./scripts/check-release-readiness.sh
+./scripts/check-release-readiness.sh v0.3.0
 ```
 
-That script runs the maintenance suite, verifies expected executable bits, and prints the current working-tree changes under `.github/workflows/`, `docs/`, `schemas/`, `templates/`, and `README.md`.
+That script runs the maintenance suite, verifies expected executable bits and public metadata files, checks the requested tag against the citation and documented release, and prints the current working-tree changes across workflows, docs, examples, schemas, templates, action metadata, citation metadata, and the README. Omit the tag for a non-release maintenance pass.
 
 ## Manual Release Workflow
 

@@ -20,7 +20,7 @@ if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
   exit 0
 fi
 
-PR_NUMBER="$(python3 - "${GITHUB_EVENT_PATH}" <<'PY'
+PR_METADATA="$(python3 - "${GITHUB_EVENT_PATH}" <<'PY'
 import json
 import sys
 
@@ -30,9 +30,18 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 pull_request = payload.get("pull_request") or {}
 number = pull_request.get("number")
 if isinstance(number, int) and number > 0:
-    print(number)
+    head_repo = (pull_request.get("head") or {}).get("repo") or {}
+    base_repo = (pull_request.get("base") or {}).get("repo") or {}
+    head_name = str(head_repo.get("full_name") or "")
+    base_name = str(base_repo.get("full_name") or "")
+    author = str((pull_request.get("user") or {}).get("login") or "")
+    is_fork = bool(head_name) and bool(base_name) and head_name != base_name
+    restricted_token = is_fork or author.casefold() == "dependabot[bot]"
+    print(f"{number}\t{'true' if restricted_token else 'false'}")
 PY
 )"
+
+IFS=$'\t' read -r PR_NUMBER RESTRICTED_PR_TOKEN <<< "${PR_METADATA}"
 
 if [[ -z "${PR_NUMBER}" ]]; then
   echo "No pull request number found. Skipping PR comment."
@@ -55,7 +64,12 @@ export ARTIFACT_LINE
 
 PAYLOAD_PATH="$(mktemp)"
 COMMENTS_PATH="$(mktemp)"
-trap 'rm -f "${PAYLOAD_PATH}" "${COMMENTS_PATH}"' EXIT
+HEADERS_PATH="$(mktemp)"
+trap 'rm -f "${PAYLOAD_PATH}" "${COMMENTS_PATH}" "${HEADERS_PATH}"' EXIT
+
+http_status_from_headers() {
+  awk 'toupper($1) ~ /^HTTP\// { status = $2 } END { print status }' "$1"
+}
 
 python3 - "${PAYLOAD_PATH}" <<'PY'
 import json
@@ -115,12 +129,22 @@ EXISTING_COMMENT_ID=""
 page=1
 
 while [[ "${page}" -le "${MAX_COMMENT_PAGES}" ]]; do
-  curl -fsS --retry 2 --retry-delay 1 \
-    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    "${comments_endpoint}?per_page=100&page=${page}" \
-    > "${COMMENTS_PATH}"
+  : > "${HEADERS_PATH}"
+  if ! curl -fsS --retry 2 --retry-delay 1 \
+      -D "${HEADERS_PATH}" \
+      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "${comments_endpoint}?per_page=100&page=${page}" \
+      > "${COMMENTS_PATH}"; then
+    HTTP_STATUS="$(http_status_from_headers "${HEADERS_PATH}")"
+    if [[ "${RESTRICTED_PR_TOKEN:-false}" == "true" && "${AI_UI_DEFAULT_GITHUB_TOKEN:-false}" == "true" && "${HTTP_STATUS}" == "403" ]]; then
+      echo "GitHub denied PR comment access to its default token for this fork or Dependabot pull request. Skipping PR comment."
+      exit 0
+    fi
+    echo "GitHub PR comment lookup failed." >&2
+    exit 1
+  fi
 
   PAGE_METADATA="$(
     COMMENT_MARKER="${COMMENT_MARKER}" \
@@ -178,11 +202,21 @@ if [[ -n "${EXISTING_COMMENT_ID}" ]]; then
   comment_method="PATCH"
 fi
 
-curl -fsS --retry 2 --retry-delay 1 \
-  -X "${comment_method}" \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  -H "Content-Type: application/json" \
-  "${comment_endpoint}" \
-  --data @"${PAYLOAD_PATH}" >/dev/null
+: > "${HEADERS_PATH}"
+if ! curl -fsS --retry 2 --retry-delay 1 \
+    -D "${HEADERS_PATH}" \
+    -X "${comment_method}" \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    -H "Content-Type: application/json" \
+    "${comment_endpoint}" \
+    --data @"${PAYLOAD_PATH}" >/dev/null; then
+  HTTP_STATUS="$(http_status_from_headers "${HEADERS_PATH}")"
+  if [[ "${RESTRICTED_PR_TOKEN:-false}" == "true" && "${AI_UI_DEFAULT_GITHUB_TOKEN:-false}" == "true" && "${HTTP_STATUS}" == "403" ]]; then
+    echo "GitHub denied PR comment writes to its default token for this fork or Dependabot pull request. Skipping PR comment."
+    exit 0
+  fi
+  echo "GitHub PR comment update failed." >&2
+  exit 1
+fi

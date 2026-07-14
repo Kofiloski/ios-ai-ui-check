@@ -95,6 +95,18 @@ Before cutting a reusable-repo release, use:
 ./scripts/check-release-readiness.sh
 ```
 
+## Public Discovery Surfaces
+
+Keep the public entry points consistent with the executable contract:
+
+- `README.md` is the human adoption path and should show real generated artifacts rather than mock product screenshots.
+- `action.yml` owns GitHub Marketplace metadata and branding; changing descriptions must not rename inputs or outputs.
+- `llms.txt` is the compact agent-readable map to the architecture, runner contract, examples, and maintenance commands.
+- `CITATION.cff` records the latest published release metadata.
+- `examples/` contains copyable post-scaffold workflows and must use a real release or commit pin.
+
+When a release supersedes the documented version, update the README, examples, `llms.txt`, and `CITATION.cff` together. Keep the deterministic example first so adoption does not imply that a model credential is required.
+
 The repo now also ships `.github/workflows/release.yml` for manual release publication. That workflow runs the same readiness check, creates the requested semantic tag, optionally force-updates the moving major tag such as `v0`, and then creates the GitHub release notes.
 
 Current coverage is aimed at the highest-drift surfaces:

@@ -234,4 +234,4 @@ jobs:
           comment-on-pr: ${{ inputs.comment-on-pr }}
           comment-author-login: ${{ inputs.comment-author-login }}
           max-duration-seconds: ${{ inputs.max-duration-seconds }}
-          github-token: ${{ secrets['github-token'] || github.token }}
+          github-token: ${{ secrets['github-token'] }}

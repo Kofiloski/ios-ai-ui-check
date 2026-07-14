@@ -10,7 +10,7 @@ read_when:
 
 `ios-ai-ui-check` can be integrated in a few different ways depending on how much coverage and enforcement you want.
 
-The examples below use `OWNER_OR_ORG/ios-ai-ui-check@main` for immediate setup. Replace `OWNER_OR_ORG` with the published repository owner. For a stable integration, pin to a tag or commit SHA before making it required.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.3.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 
 ## 1. Generated Manual + PR Workflow
 
@@ -132,7 +132,7 @@ jobs:
             -derivedDataPath .derivedData/ci
 
       - name: Run AI UI action
-        uses: OWNER_OR_ORG/ios-ai-ui-check@main
+        uses: Kofiloski/ios-ai-ui-check@v0.3.0
         with:
           planner-command: ./scripts/plan-ai-ui-scenario.sh
           planner-goal: Verify the most likely user-visible flow affected by this PR.
@@ -201,7 +201,7 @@ jobs:
             -only-testing:AppTests
 
       - name: Run AI UI action
-        uses: OWNER_OR_ORG/ios-ai-ui-check@main
+        uses: Kofiloski/ios-ai-ui-check@v0.3.0
         with:
           planner-command: ./scripts/plan-ai-ui-scenario.sh
           planner-goal: Verify the most likely user-visible flow affected by this PR.

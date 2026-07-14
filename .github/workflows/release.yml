@@ -55,7 +55,9 @@ jobs:
 
       - name: Run release readiness
         shell: bash
-        run: ./scripts/check-release-readiness.sh
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: ./scripts/check-release-readiness.sh "${VERSION_TAG}"
 
       - name: Configure git author
         shell: bash

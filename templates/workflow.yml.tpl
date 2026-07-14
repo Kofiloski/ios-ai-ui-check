@@ -137,7 +137,6 @@ jobs:
           planner-goal: ${{ github.event_name == 'workflow_dispatch' && inputs.planner_goal || github.event_name == 'pull_request' && 'Verify the most likely user-visible flow affected by this PR.' || '' }}
           simulator-name: __SIMULATOR_NAME_EXPRESSION_YAML__
           simulator-runtime: __SIMULATOR_RUNTIME_EXPRESSION_YAML__
-          github-token: ${{ github.token }}
         env:
           AI_UI_DERIVED_DATA_PATH: ${{ github.workspace }}/.derivedData/ci
           AI_UI_PLANNER_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.planner_model || 'gpt-5-mini' }}

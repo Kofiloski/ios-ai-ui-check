@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: If you use this software in research, documentation, or a tool catalog, please cite it using this metadata.
+title: ios-ai-ui-check
+type: software
+authors:
+  - family-names: Kofiloski
+    given-names: Kristijan
+repository-code: https://github.com/Kofiloski/ios-ai-ui-check
+url: https://github.com/Kofiloski/ios-ai-ui-check
+license: MIT
+version: 0.3.0
+date-released: 2026-07-14
+abstract: >-
+  A provider-neutral GitHub Action and deterministic scaffold for running
+  app-owned iOS Simulator UI scenarios with reviewable artifacts and managed
+  pull-request summaries.
+keywords:
+  - ios
+  - xcuitest
+  - github-actions
+  - ui-testing
+  - simulator
+  - ai-planning

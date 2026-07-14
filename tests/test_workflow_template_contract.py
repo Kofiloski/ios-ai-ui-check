@@ -43,7 +43,7 @@ class WorkflowTemplateContractTests(unittest.TestCase):
         template = TEMPLATE_PATH.read_text(encoding="utf-8")
         action = ACTION_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("github-token: ${{ github.token }}", template)
+        self.assertNotIn("github-token: ${{ github.token }}", template)
         self.assertIn("github-token:", action)
         self.assertIn("comment-author-login:", action)
         self.assertIn(

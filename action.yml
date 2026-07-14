@@ -1,5 +1,10 @@
 name: iOS AI UI Check
-description: Plan or load a scenario, run the scaffolded app-side iOS simulator runner, record video, and report artifacts.
+description: Run deterministic or AI-planned iOS Simulator UI checks with video, artifacts, and managed PR summaries.
+author: Kristijan Kofiloski
+
+branding:
+  icon: check-circle
+  color: blue
 
 inputs:
   simulator-name:
@@ -11,39 +16,39 @@ inputs:
     required: false
     default: "26.2"
   provided-scenario-path:
-    description: Optional explicit path to a checked-in scenario JSON file.
+    description: Path to a checked-in scenario JSON file; bypasses planning when set.
     required: false
     default: ""
   planner-command:
-    description: Optional command that writes scenario JSON to AI_UI_SCENARIO_OUTPUT_PATH when no scenario file is provided.
+    description: Command that writes scenario JSON to AI_UI_SCENARIO_OUTPUT_PATH when no provided scenario is set.
     required: false
     default: ""
   planner-goal:
-    description: Optional short sentence describing what the planner should verify.
+    description: Optional goal sentence forwarded to the app-owned planner command.
     required: false
     default: ""
   expected-screenshot-path:
-    description: Optional expected screenshot path.
+    description: Optional reference screenshot forwarded to the planner and runner; no built-in image diff is performed.
     required: false
     default: ""
   artifacts-dir:
-    description: Directory for generated artifacts.
+    description: Directory for summaries, manifests, media, logs, screenshots, and result bundles.
     required: false
     default: artifacts/ios-ai-ui-check
   upload-artifacts:
-    description: Upload the artifacts directory.
+    description: Upload the artifacts directory even when planning or execution fails.
     required: false
     default: "true"
   record-video:
-    description: Record simulator video while running the runner.
+    description: Record Simulator video while the app-owned runner executes.
     required: false
     default: "true"
   comment-on-pr:
-    description: Post a PR comment on pull_request events.
+    description: Create or update one managed summary comment on pull_request events.
     required: false
     default: "true"
   github-token:
-    description: Token used to create or update the managed pull request comment.
+    description: Token used only to create or update the managed pull request comment.
     required: false
     default: ""
   comment-author-login:
@@ -51,7 +56,7 @@ inputs:
     required: false
     default: ""
   max-duration-seconds:
-    description: Per-phase timeout applied independently to inspection, planner, and runner commands.
+    description: Timeout applied independently to inspection, planner, and final runner commands.
     required: false
     default: "300"
 
@@ -199,11 +204,25 @@ runs:
         if-no-files-found: warn
         retention-days: 7
 
+    - name: Write job summary
+      if: ${{ always() }}
+      shell: bash
+      env:
+        STATUS: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
+        SUMMARY_PATH: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+      run: |
+        python3 "${{ github.action_path }}/scripts/write-job-summary.py" \
+          --status "${STATUS:-unknown}" \
+          --summary-path "${SUMMARY_PATH:-}" \
+          --artifact-url "${ARTIFACT_URL:-}"
+
     - name: Comment on PR
       if: ${{ always() && inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN || github.token }}
+        AI_UI_DEFAULT_GITHUB_TOKEN: ${{ (inputs.github-token == '' && env.GITHUB_TOKEN == '') || inputs.github-token == github.token || env.GITHUB_TOKEN == github.token }}
         AI_UI_COMMENT_AUTHOR_LOGIN: ${{ inputs.comment-author-login || env.AI_UI_COMMENT_AUTHOR_LOGIN || 'github-actions[bot]' }}
         STATUS: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
         SUMMARY_PATH: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
