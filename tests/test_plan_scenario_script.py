@@ -32,7 +32,7 @@ class PlanScenarioScriptTests(unittest.TestCase):
             github_output = root / "github-output.txt"
 
             scenario_path.write_text(
-                '{"steps":[{"action":"tap","value":"unsupported"}]}\n',
+                '{"name":"Invalid provided scenario","steps":[{"action":"tap","value":"unsupported"}]}\n',
                 encoding="utf-8",
             )
 
@@ -64,7 +64,7 @@ class PlanScenarioScriptTests(unittest.TestCase):
                 """#!/usr/bin/env bash
 set -euo pipefail
 cat > "$AI_UI_SCENARIO_OUTPUT_PATH" <<'EOF'
-{"steps":[{"action":"tap","value":"unsupported"}]}
+{"name":"Invalid planned scenario","steps":[{"action":"tap","value":"unsupported"}]}
 EOF
 """,
                 encoding="utf-8",

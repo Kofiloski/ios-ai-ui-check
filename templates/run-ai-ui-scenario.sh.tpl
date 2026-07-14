@@ -3,9 +3,15 @@ __SCAFFOLD_HEADER_SHELL__
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_PATH="${AI_UI_PROJECT_PATH:-$ROOT_DIR/__PROJECT_PATH__}"
-SCHEME="${AI_UI_SCHEME:-__SCHEME__}"
-UI_TEST_TARGET="${AI_UI_UI_TEST_TARGET:-__UI_TEST_TARGET__}"
+DEFAULT_PROJECT_RELATIVE_PATH=__PROJECT_PATH_SHELL__
+DEFAULT_SCHEME=__SCHEME_SHELL__
+DEFAULT_UI_TEST_TARGET=__UI_TEST_TARGET_SHELL__
+DEFAULT_SCENARIO_RELATIVE_PATH=__SCENARIO_PATH_SHELL__
+DEFAULT_SIMULATOR_NAME=__SIMULATOR_NAME_SHELL__
+DEFAULT_SIMULATOR_RUNTIME=__SIMULATOR_RUNTIME_SHELL__
+PROJECT_PATH="${AI_UI_PROJECT_PATH:-$ROOT_DIR/$DEFAULT_PROJECT_RELATIVE_PATH}"
+SCHEME="${AI_UI_SCHEME:-$DEFAULT_SCHEME}"
+UI_TEST_TARGET="${AI_UI_UI_TEST_TARGET:-$DEFAULT_UI_TEST_TARGET}"
 MODE="run"
 if [[ $# -gt 0 ]]; then
   case "$1" in
@@ -15,13 +21,15 @@ if [[ $# -gt 0 ]]; then
       ;;
   esac
 fi
-SCENARIO_PATH="${AI_UI_SCENARIO_PATH:-${1:-$ROOT_DIR/__SCENARIO_PATH__}}"
+SCENARIO_PATH="${AI_UI_SCENARIO_PATH:-${1:-$ROOT_DIR/$DEFAULT_SCENARIO_RELATIVE_PATH}}"
 ARTIFACTS_DIR="${AI_UI_ARTIFACTS_DIR:-$ROOT_DIR/artifacts/ai-ui/manual-$(date +%Y%m%d-%H%M%S)}"
-SIM_DEVICE_NAME="${AI_UI_SIMULATOR_NAME:-${SIM_DEVICE_NAME:-__SIMULATOR_NAME__}}"
-SIM_DEVICE_RUNTIME="${AI_UI_SIMULATOR_RUNTIME:-${SIM_DEVICE_RUNTIME:-__SIMULATOR_RUNTIME__}}"
+SIM_DEVICE_NAME="${AI_UI_SIMULATOR_NAME:-${SIM_DEVICE_NAME:-$DEFAULT_SIMULATOR_NAME}}"
+SIM_DEVICE_RUNTIME="${AI_UI_SIMULATOR_RUNTIME:-${SIM_DEVICE_RUNTIME:-$DEFAULT_SIMULATOR_RUNTIME}}"
 SIM_DEVICE_ID="${AI_UI_SIMULATOR_UDID:-${SIM_DEVICE_ID:-}}"
 SIM_DEVICE_ARCH="${AI_UI_SIMULATOR_ARCH:-$(uname -m)}"
 DERIVED_DATA_PATH="${AI_UI_DERIVED_DATA_PATH:-$ROOT_DIR/.derivedData/ai-ui}"
+BUILD_MARKER_PATH="${AI_UI_BUILD_FOR_TESTING_MARKER_PATH:-}"
+AI_UI_CONTRACT_SCRIPT="${AI_UI_CONTRACT_SCRIPT:-$ROOT_DIR/scripts/ai_ui_contract.py}"
 
 absolute_path() {
   python3 - "$1" <<'PY'
@@ -33,10 +41,109 @@ PY
 }
 
 select_base_xctestrun() {
-  find "$DERIVED_DATA_PATH/Build/Products" \
-    -name '*.xctestrun' \
-    ! -name '*-runtime.xctestrun' \
-    -print -quit 2>/dev/null || true
+  local mode="${1:-select}"
+  local selection_state="${2:-}"
+  local require_changed="${3:-0}"
+
+  XCTESTRUN_SELECTION_STATE="$selection_state" \
+  python3 - "$DERIVED_DATA_PATH/Build/Products" "$UI_TEST_TARGET" "$mode" "$require_changed" <<'PY'
+import hashlib
+import json
+import os
+import plistlib
+import sys
+from pathlib import Path
+
+products_path = Path(sys.argv[1])
+target_name = sys.argv[2]
+mode = sys.argv[3]
+require_changed = sys.argv[4] == "1"
+candidates = []
+
+if products_path.is_dir():
+    for path in products_path.rglob("*.xctestrun"):
+        if path.name.endswith("-runtime.xctestrun") or not path.is_file():
+            continue
+        try:
+            with path.open("rb") as handle:
+                payload = plistlib.load(handle)
+        except (OSError, plistlib.InvalidFileException):
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+        compatible = target_name in payload
+        configurations = payload.get("TestConfigurations", [])
+        if not isinstance(configurations, list):
+            configurations = []
+        for configuration in configurations:
+            if not isinstance(configuration, dict):
+                continue
+            targets = configuration.get("TestTargets", [])
+            if not isinstance(targets, list):
+                continue
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                if target.get("BlueprintName") == target_name or target.get("ProductModuleName") == target_name:
+                    compatible = True
+                    break
+            if compatible:
+                break
+
+        if compatible:
+            try:
+                stat = path.stat()
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            fingerprint = {
+                "mtime_ns": stat.st_mtime_ns,
+                "size": stat.st_size,
+                "sha256": digest,
+            }
+            candidates.append((path.as_posix(), fingerprint))
+
+if mode == "snapshot":
+    print(json.dumps(dict(candidates), sort_keys=True, separators=(",", ":")))
+    raise SystemExit(0)
+
+if mode == "recorded":
+    recorded_path = os.environ.get("XCTESTRUN_SELECTION_STATE", "")
+    for candidate_path, _ in candidates:
+        if candidate_path == recorded_path:
+            print(candidate_path)
+            break
+    raise SystemExit(0)
+
+if mode == "select-single":
+    # A successful incremental build may leave an up-to-date .xctestrun
+    # untouched. Reuse it only when there is no competing compatible product;
+    # otherwise freshness cannot disambiguate the build output safely.
+    if len(candidates) == 1:
+        print(candidates[0][0])
+    raise SystemExit(0)
+
+if mode != "select":
+    raise SystemExit(f"Unsupported xctestrun selection mode: {mode}")
+
+if require_changed:
+    try:
+        baseline = json.loads(os.environ.get("XCTESTRUN_SELECTION_STATE", "") or "{}")
+    except json.JSONDecodeError:
+        raise SystemExit("Invalid xctestrun baseline snapshot")
+    if not isinstance(baseline, dict):
+        raise SystemExit("Invalid xctestrun baseline snapshot")
+    candidates = [
+        candidate
+        for candidate in candidates
+        if baseline.get(candidate[0]) != candidate[1]
+    ]
+
+if candidates:
+    candidates.sort(key=lambda candidate: (candidate[1]["mtime_ns"], candidate[0]), reverse=True)
+    print(candidates[0][0])
+PY
 }
 
 patch_xctestrun_testing_env() {
@@ -104,6 +211,9 @@ PY
 
 ARTIFACTS_DIR="$(absolute_path "$ARTIFACTS_DIR")"
 DERIVED_DATA_PATH="$(absolute_path "$DERIVED_DATA_PATH")"
+if [[ -n "$BUILD_MARKER_PATH" ]]; then
+  BUILD_MARKER_PATH="$(absolute_path "$BUILD_MARKER_PATH")"
+fi
 if [[ "$MODE" == "run" ]]; then
   SCENARIO_PATH="$(absolute_path "$SCENARIO_PATH")"
 fi
@@ -213,6 +323,16 @@ if [[ "$MODE" == "run" ]]; then
     exit 1
   fi
 
+  if [[ ! -f "$AI_UI_CONTRACT_SCRIPT" ]]; then
+    echo "Scenario contract helper not found: $AI_UI_CONTRACT_SCRIPT" >&2
+    exit 1
+  fi
+
+  if ! python3 "$AI_UI_CONTRACT_SCRIPT" validate-scenario "$SCENARIO_PATH"; then
+    echo "Scenario failed canonical validation: $SCENARIO_PATH" >&2
+    exit 1
+  fi
+
   SCENARIO_NAME="$(python3 - "$SCENARIO_PATH" <<'PY'
 import json
 import sys
@@ -286,8 +406,25 @@ if [[ "$SIM_DEVICE_ARCH" == "arm64" || "$SIM_DEVICE_ARCH" == "x86_64" ]]; then
   destination="${destination},arch=$SIM_DEVICE_ARCH"
 fi
 xctestrun_path="$(select_base_xctestrun)"
+force_build_for_testing=0
+if [[ "${AI_UI_FORCE_BUILD_FOR_TESTING:-0}" == "1" ]]; then
+  if [[ -z "$BUILD_MARKER_PATH" || ! -f "$BUILD_MARKER_PATH" ]]; then
+    force_build_for_testing=1
+  else
+    recorded_xctestrun_path=""
+    IFS= read -r recorded_xctestrun_path < "$BUILD_MARKER_PATH" || true
+    recorded_xctestrun_path="$(select_base_xctestrun recorded "$recorded_xctestrun_path")"
+    if [[ -n "$recorded_xctestrun_path" ]]; then
+      xctestrun_path="$recorded_xctestrun_path"
+    else
+      force_build_for_testing=1
+    fi
+  fi
+fi
 
-if [[ -z "$xctestrun_path" || "${AI_UI_FORCE_BUILD_FOR_TESTING:-0}" == "1" ]]; then
+build_performed=0
+if [[ -z "$xctestrun_path" || "$force_build_for_testing" == "1" ]]; then
+  xctestrun_baseline="$(select_base_xctestrun snapshot)"
   build_start="$(date +%s)"
   xcodebuild build-for-testing \
     -project "$PROJECT_PATH" \
@@ -298,13 +435,29 @@ if [[ -z "$xctestrun_path" || "${AI_UI_FORCE_BUILD_FOR_TESTING:-0}" == "1" ]]; t
     -derivedDataPath "$DERIVED_DATA_PATH" | tee "$BUILD_LOG_PATH"
   build_end="$(date +%s)"
   build_duration_seconds="$((build_end - build_start))"
+  build_performed=1
 
-  xctestrun_path="$(select_base_xctestrun)"
+  xctestrun_path="$(select_base_xctestrun select "$xctestrun_baseline" 1)"
+  if [[ -z "$xctestrun_path" ]]; then
+    xctestrun_path="$(select_base_xctestrun select-single)"
+    if [[ -n "$xctestrun_path" ]]; then
+      echo "Build left the sole compatible .xctestrun unchanged; reusing it." >&2
+    fi
+  fi
 fi
 
 if [[ -z "$xctestrun_path" ]]; then
-  echo "Could not locate an .xctestrun file in $DERIVED_DATA_PATH/Build/Products" >&2
+  if [[ "$build_performed" == "1" ]]; then
+    echo "Build did not produce or update a compatible .xctestrun file in $DERIVED_DATA_PATH/Build/Products" >&2
+  else
+    echo "Could not locate an .xctestrun file in $DERIVED_DATA_PATH/Build/Products" >&2
+  fi
   exit 1
+fi
+
+if [[ "$build_performed" == "1" && -n "$BUILD_MARKER_PATH" ]]; then
+  mkdir -p "$(dirname "$BUILD_MARKER_PATH")"
+  printf '%s\n' "$xctestrun_path" > "$BUILD_MARKER_PATH"
 fi
 
 runtime_xctestrun_path="$(dirname "$xctestrun_path")/${UI_TEST_TARGET}-runtime.xctestrun"

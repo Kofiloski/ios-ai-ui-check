@@ -351,30 +351,15 @@ run_live_inspection() {
   AI_UI_SIMULATOR_RUNTIME="${SIMULATOR_RUNTIME}" \
   AI_UI_SIMULATOR_UDID="${AI_UI_SIMULATOR_UDID}" \
   AI_UI_SIMULATOR_RUNTIME_NAME="${AI_UI_SIMULATOR_RUNTIME_NAME}" \
+  AI_UI_MAX_DURATION_SECONDS="${MAX_DURATION_SECONDS}" \
   AI_UI_BEFORE_PLANNING_UI_TREE_PATH="${BEFORE_PLANNING_UI_TREE_PATH}" \
   AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH="${BEFORE_PLANNING_SCREENSHOT_PATH}" \
   AI_UI_CURRENT_UI_TREE_PATH="${BEFORE_PLANNING_UI_TREE_PATH}" \
   AI_UI_CURRENT_SCREENSHOT_PATH="${BEFORE_PLANNING_SCREENSHOT_PATH}" \
-  python3 - "${MAX_DURATION_SECONDS}" "${RUNNER_SCRIPT}" <<'PY'
-import os
-import subprocess
-import sys
-
-timeout = int(sys.argv[1])
-script = sys.argv[2]
-
-try:
-    completed = subprocess.run(
-        ["/bin/bash", script, "inspect"],
-        env=os.environ.copy(),
-        timeout=timeout,
-        check=False,
-    )
-    sys.exit(completed.returncode)
-except subprocess.TimeoutExpired:
-    sys.stderr.write(f"Runner inspect timed out after {timeout} seconds\n")
-    sys.exit(124)
-PY
+  python3 "${ACTION_ROOT}/scripts/run-with-timeout.py" \
+    --timeout "${MAX_DURATION_SECONDS}" \
+    --label "Runner inspect" \
+    -- /bin/bash "${RUNNER_SCRIPT}" inspect
   inspect_exit="$?"
   set -e
 
@@ -472,14 +457,21 @@ run_planner() {
   AI_UI_REPOSITORY="${GITHUB_REPOSITORY:-}" \
   AI_UI_PLANNER_NOTE_OUTPUT_PATH="${PLANNER_NOTE_PATH}" \
   AI_UI_WORKSPACE="${GITHUB_WORKSPACE:-$PWD}" \
-  bash -c "${PLANNER_COMMAND}" >"${PLANNER_RESPONSE_TEXT_PATH}" 2>&1
+  python3 "${ACTION_ROOT}/scripts/run-with-timeout.py" \
+    --timeout "${MAX_DURATION_SECONDS}" \
+    --label "Planner command" \
+    -- /bin/bash -c "${PLANNER_COMMAND}" >"${PLANNER_RESPONSE_TEXT_PATH}" 2>&1
   local planner_exit="$?"
   set -e
 
   trim_file_if_empty "${PLANNER_RESPONSE_TEXT_PATH}"
 
   if [[ "${planner_exit}" -ne 0 ]]; then
-    FAILURE_NOTE="Planner command failed with exit code ${planner_exit}."
+    if [[ "${planner_exit}" -eq 124 ]]; then
+      FAILURE_NOTE="Planner command timed out after ${MAX_DURATION_SECONDS} seconds."
+    else
+      FAILURE_NOTE="Planner command failed with exit code ${planner_exit}."
+    fi
     return 1
   fi
 
@@ -496,6 +488,11 @@ main() {
   local resolved_provided_path=""
 
   STATUS="failed"
+
+  if [[ ! "${MAX_DURATION_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
+    FAILURE_NOTE="max-duration-seconds must be a positive integer."
+    return 1
+  fi
 
   if [[ -n "${PROVIDED_SCENARIO_PATH}" && -f "${PROVIDED_SCENARIO_PATH}" ]]; then
     resolved_provided_path="${PROVIDED_SCENARIO_PATH}"

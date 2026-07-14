@@ -16,6 +16,7 @@ EXPECTED_EXECUTABLES=(
   "scripts/post-pr-comment.sh"
   "scripts/record-video.sh"
   "scripts/refresh-scaffold.py"
+  "scripts/run-with-timeout.py"
   "scripts/run-check.sh"
   "scripts/scaffold-app-repo.py"
   "scripts/write-artifact-manifest.py"

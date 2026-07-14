@@ -24,7 +24,7 @@ The action exports:
 - `AI_UI_SIMULATOR_RUNTIME`
 - `AI_UI_SIMULATOR_UDID`
 - `AI_UI_SIMULATOR_RUNTIME_NAME`
-- `AI_UI_MAX_DURATION_SECONDS`
+- `AI_UI_MAX_DURATION_SECONDS`: timeout for the current runner invocation; the public `max-duration-seconds` input applies the same limit independently to inspection, planning, and final scenario execution
 
 When the action uses AI planning, it may also invoke the runner in `inspect` mode before planning. In that mode the scaffolded runner writes:
 
@@ -80,6 +80,24 @@ The scaffolded baseline runner supports these step actions:
 - `assertVisible`
 - `assertText`
 - `screenshot`
+
+## Scenario Validation
+
+Every runtime scenario must have a nonblank `name` and a nonempty `steps` array. Unknown top-level fields, unknown step fields, and fields that do not apply to a step's action are rejected before the runner starts.
+
+Supported step shapes are:
+
+- `launch`: optional `arguments`, `environment`, and `wait_seconds`
+- `tap`: `id` or `label` is required; optional `timeout`
+- `type`: nonblank `text` is required; optional `id`, `label`, and `timeout`; without a target, the runner types into the app
+- `wait`: finite, nonnegative `seconds` is required
+- `assertVisible`: `id` or `label` is required; optional `timeout`
+- `assertText`: nonblank `text` is required; optional `id`, `label`, and `timeout`; without a target, the runner searches the visible app hierarchy
+- `screenshot`: optional relative `output`; absolute paths, parent-directory traversal, and paths resolving to the artifacts directory itself are rejected so output names a file under `AI_UI_ARTIFACTS_DIR`
+
+`wait_seconds` must also be finite and nonnegative. Every provided `timeout` must be finite and greater than zero.
+
+The scaffolded OpenAI planner uses a separate strict wire schema whose launch environment is an array of `{ "key", "value" }` entries. The planner normalizes and validates that response before writing the provider-neutral runtime scenario, so app-side runners continue to receive `environment` as a string-to-string JSON object.
 
 ## Suggested Summary Format
 

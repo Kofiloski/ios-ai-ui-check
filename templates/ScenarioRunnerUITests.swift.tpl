@@ -200,13 +200,50 @@ private struct ScenarioRunner {
         }
 
         let outputName = step.output ?? "scenario-screenshot.png"
-        let outputURL = URL(fileURLWithPath: artifactsDirectory).appendingPathComponent(outputName)
+        let outputURL = try containedArtifactURL(
+            outputName: outputName,
+            artifactsDirectory: artifactsDirectory
+        )
         try FileManager.default.createDirectory(
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true,
             attributes: nil
         )
         try screenshot.pngRepresentation.write(to: outputURL)
+    }
+
+    private func containedArtifactURL(
+        outputName: String,
+        artifactsDirectory: String
+    ) throws -> URL {
+        guard outputName.isEmpty == false else {
+            throw ScenarioError("Screenshot output must be a non-empty relative path")
+        }
+
+        let outputPath = NSString(string: outputName)
+        guard outputPath.isAbsolutePath == false,
+              outputName.split(separator: "/", omittingEmptySubsequences: false).contains("..") == false,
+              outputName.split(separator: "\\", omittingEmptySubsequences: false).contains("..") == false
+        else {
+            throw ScenarioError("Screenshot output must stay inside AI_UI_ARTIFACTS_DIR")
+        }
+
+        let artifactsURL = URL(fileURLWithPath: artifactsDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let outputURL = artifactsURL
+            .appendingPathComponent(outputName)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let artifactsPrefix = artifactsURL.path.hasSuffix("/")
+            ? artifactsURL.path
+            : artifactsURL.path + "/"
+
+        guard outputURL.path.hasPrefix(artifactsPrefix) else {
+            throw ScenarioError("Screenshot output must stay inside AI_UI_ARTIFACTS_DIR")
+        }
+
+        return outputURL
     }
 
     private enum PreferredInteraction {

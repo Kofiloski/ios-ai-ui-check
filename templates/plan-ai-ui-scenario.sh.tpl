@@ -3,12 +3,13 @@ __SCAFFOLD_HEADER_SHELL__
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEFAULT_SCENARIO_RELATIVE_PATH=__SCENARIO_PATH_SHELL__
 OUTPUT_PATH="${AI_UI_SCENARIO_OUTPUT_PATH:?AI_UI_SCENARIO_OUTPUT_PATH is required}"
 OPENAI_API_KEY="${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
 OPENAI_MODEL="${AI_UI_PLANNER_MODEL:-${AI_UI_OPENAI_MODEL:-gpt-5-mini}}"
 EXPECTED_SCREENSHOT_PATH="${AI_UI_EXPECTED_SCREENSHOT_PATH:-}"
 PLANNER_CONTEXT_PATH="${AI_UI_PLANNER_CONTEXT_PATH:-$ROOT_DIR/.github/ai-ui/planner-context.md}"
-SCENARIO_EXAMPLE_PATH="${AI_UI_SCENARIO_EXAMPLE_PATH:-$ROOT_DIR/__SCENARIO_PATH__}"
+SCENARIO_EXAMPLE_PATH="${AI_UI_SCENARIO_EXAMPLE_PATH:-$ROOT_DIR/$DEFAULT_SCENARIO_RELATIVE_PATH}"
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 
@@ -30,28 +31,40 @@ expected_screenshot_path = Path(sys.argv[4]) if sys.argv[4] else None
 planner_context_path = Path(sys.argv[5])
 scenario_example_path = Path(sys.argv[6])
 api_key = os.environ["OPENAI_API_KEY"]
-event_path = Path(os.environ.get("AI_UI_EVENT_PATH", ""))
 repository = os.environ.get("AI_UI_REPOSITORY", "")
 planner_goal = os.environ.get("AI_UI_PLANNER_GOAL", "").strip()
-before_planning_screenshot_path = Path(
-    os.environ.get("AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH")
-    or os.environ.get("AI_UI_CURRENT_SCREENSHOT_PATH", "")
+app_scheme = __SCHEME_PYTHON__
+
+
+def optional_path(*environment_names: str) -> Path | None:
+    for environment_name in environment_names:
+        raw_value = os.environ.get(environment_name, "").strip()
+        if raw_value:
+            return Path(raw_value)
+    return None
+
+
+event_path = optional_path("AI_UI_EVENT_PATH")
+before_planning_screenshot_path = optional_path(
+    "AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH",
+    "AI_UI_CURRENT_SCREENSHOT_PATH",
 )
-before_planning_ui_tree_path = Path(
-    os.environ.get("AI_UI_BEFORE_PLANNING_UI_TREE_PATH")
-    or os.environ.get("AI_UI_CURRENT_UI_TREE_PATH", "")
+before_planning_ui_tree_path = optional_path(
+    "AI_UI_BEFORE_PLANNING_UI_TREE_PATH",
+    "AI_UI_CURRENT_UI_TREE_PATH",
 )
-planner_note_output_path = Path(os.environ.get("AI_UI_PLANNER_NOTE_OUTPUT_PATH", ""))
+planner_note_output_path = optional_path("AI_UI_PLANNER_NOTE_OUTPUT_PATH")
 planner_draft_scenario_path_raw = os.environ.get("AI_UI_PLANNER_DRAFT_SCENARIO_PATH", "").strip()
 planner_draft_scenario_path = Path(planner_draft_scenario_path_raw) if planner_draft_scenario_path_raw else None
 
 sys.path.insert(0, str(root_dir / "scripts"))
 
 from ai_ui_contract import (  # noqa: E402
-    SCENARIO_SCHEMA,
+    OPENAI_PLANNER_SCHEMA,
     collect_accessibility_strings,
     collect_launch_hints,
     collect_ui_tree_identifiers,
+    normalize_openai_planner_scenario,
     read_json,
     read_text,
     render_markdown_list,
@@ -83,8 +96,8 @@ def collect_git_diff(repo_root: Path, payload: dict) -> str:
     return ""
 
 
-def load_event_payload(path: Path) -> dict:
-    if not path.exists():
+def load_event_payload(path: Path | None) -> dict:
+    if path is None or not path.is_file():
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -93,7 +106,7 @@ def load_event_payload(path: Path) -> dict:
 
 
 def build_image_content(path: Path) -> dict | None:
-    if not path.exists():
+    if not path.is_file():
         return None
     media_type, _ = mimetypes.guess_type(path.name)
     if not media_type:
@@ -189,12 +202,23 @@ scenario_example = read_text(scenario_example_path, fallback="")
 identifiers, labels = collect_accessibility_strings(root_dir)
 launch_environment_keys, launch_arguments = collect_launch_hints(root_dir)
 git_diff = collect_git_diff(root_dir, event_payload)
-before_planning_ui_tree_summary = summarize_ui_tree(before_planning_ui_tree_path)
-before_planning_ui_tree_identifiers = collect_ui_tree_identifiers(before_planning_ui_tree_path)
+before_planning_ui_tree_summary = (
+    summarize_ui_tree(before_planning_ui_tree_path)
+    if before_planning_ui_tree_path is not None
+    else "(unavailable)"
+)
+before_planning_ui_tree_identifiers = (
+    collect_ui_tree_identifiers(before_planning_ui_tree_path)
+    if before_planning_ui_tree_path is not None
+    else set()
+)
 
 system_prompt = (
     "You generate deterministic iOS UI test scenarios for a constrained XCUITest runner. "
     "Return only JSON that matches the provided schema. "
+    "The strict response shape requires every step field; set fields that do not apply to null. "
+    "Represent launch environment values as an array of key/value objects, or null when unused. "
+    "Use only arguments, environment, and wait_seconds for launch; id, label, and timeout for tap or assertVisible; id, label, text, and timeout for type or assertText; seconds for wait; and output for screenshot. "
     "Only use these supported actions: launch, tap, type, wait, assertVisible, assertText, screenshot. "
     "Prefer stable accessibility identifiers over labels. "
     "Always begin with a launch step. "
@@ -218,7 +242,7 @@ system_prompt = (
 
 user_prompt = f"""
 Repository: {repository or root_dir.name}
-App scheme: __SCHEME__
+App scheme: {app_scheme}
 
 Planner context:
 {planner_context}
@@ -291,7 +315,7 @@ payload = {
         "format": {
             "type": "json_schema",
             "name": "ios_ui_scenario",
-            "schema": SCENARIO_SCHEMA,
+            "schema": OPENAI_PLANNER_SCHEMA,
             "strict": True,
         }
     },
@@ -325,9 +349,10 @@ for item in response_payload.get("output", []):
 if not output_text_parts:
     raise SystemExit("OpenAI response did not include output_text content")
 
-scenario = json.loads("".join(output_text_parts))
+planner_scenario = json.loads("".join(output_text_parts))
 if planner_draft_scenario_path is not None:
-    write_json(planner_draft_scenario_path, scenario)
+    write_json(planner_draft_scenario_path, planner_scenario)
+scenario = normalize_openai_planner_scenario(planner_scenario)
 validate_generated_scenario(
     scenario,
     known_identifiers=identifiers,
@@ -341,7 +366,8 @@ planner_note = derive_planner_note(
     scenario=scenario,
     before_planning_ui_tree_identifiers=before_planning_ui_tree_identifiers,
 )
-if planner_note_output_path and not planner_note_output_path.is_dir():
+if planner_note_output_path is not None and not planner_note_output_path.is_dir():
+    planner_note_output_path.parent.mkdir(parents=True, exist_ok=True)
     if planner_note:
         planner_note_output_path.write_text(planner_note + "\n", encoding="utf-8")
     elif planner_note_output_path.exists():

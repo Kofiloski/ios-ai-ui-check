@@ -5,14 +5,28 @@ set -euo pipefail
 OUTPUT_ENV_FILE="${1:?OUTPUT_ENV_FILE is required}"
 SIMULATOR_NAME="${SIMULATOR_NAME:?SIMULATOR_NAME is required}"
 SIMULATOR_RUNTIME="${SIMULATOR_RUNTIME:-26.2}"
+mkdir -p "$(dirname "${OUTPUT_ENV_FILE}")"
 
 if [[ -n "${AI_UI_SIMULATOR_UDID:-}" && -n "${AI_UI_SIMULATOR_DEVICE_NAME:-}" && -n "${AI_UI_SIMULATOR_RUNTIME_ID:-}" && -n "${AI_UI_SIMULATOR_RUNTIME_NAME:-}" ]]; then
-  cat > "${OUTPUT_ENV_FILE}" <<EOF
-export AI_UI_SIMULATOR_UDID='${AI_UI_SIMULATOR_UDID}'
-export AI_UI_SIMULATOR_DEVICE_NAME='${AI_UI_SIMULATOR_DEVICE_NAME}'
-export AI_UI_SIMULATOR_RUNTIME_ID='${AI_UI_SIMULATOR_RUNTIME_ID}'
-export AI_UI_SIMULATOR_RUNTIME_NAME='${AI_UI_SIMULATOR_RUNTIME_NAME}'
-EOF
+  python3 - "${OUTPUT_ENV_FILE}" \
+    "${AI_UI_SIMULATOR_UDID}" \
+    "${AI_UI_SIMULATOR_DEVICE_NAME}" \
+    "${AI_UI_SIMULATOR_RUNTIME_ID}" \
+    "${AI_UI_SIMULATOR_RUNTIME_NAME}" <<'PY'
+import shlex
+import sys
+
+output_env_path, udid, device_name, runtime_id, runtime_name = sys.argv[1:6]
+
+with open(output_env_path, "w", encoding="utf-8") as handle:
+    for key, value in (
+        ("AI_UI_SIMULATOR_UDID", udid),
+        ("AI_UI_SIMULATOR_DEVICE_NAME", device_name),
+        ("AI_UI_SIMULATOR_RUNTIME_ID", runtime_id),
+        ("AI_UI_SIMULATOR_RUNTIME_NAME", runtime_name),
+    ):
+        handle.write(f"export {key}={shlex.quote(value)}\n")
+PY
 
   xcrun simctl boot "${AI_UI_SIMULATOR_UDID}" >/dev/null 2>&1 || true
   xcrun simctl bootstatus "${AI_UI_SIMULATOR_UDID}" -b

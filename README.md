@@ -139,8 +139,15 @@ The scaffold script will:
 This setup step is fully deterministic. The scaffold script does not use an AI agent.
 By default, the scaffolded scenario and planner context are generic starter files. App-specific guidance only appears if you edit those files after generation or supply them explicitly through `--scenario-template` and `--planner-context-template`.
 Template improvements in `ios-ai-ui-check` apply to future scaffolds and explicit refreshes only. Existing app repos keep their generated files until you rerun the scaffold or patch those files manually.
-Generated files now include lightweight provenance headers where the file format allows them, and the scaffold writes `.github/ai-ui/scaffold-manifest.json` with the originating action commit plus a refresh command. If you want to refresh a scaffolded repo after template changes, rerun the recorded command with the current `ios-ai-ui-check` checkout you want to use.
+Generated files now include lightweight provenance headers where the file format allows them, and the scaffold writes `.github/ai-ui/scaffold-manifest.json` with the originating action commit plus a portable refresh command. The recorded command contains no absolute app, action-checkout, or source-template paths. Run it from the app repo root after setting `IOS_AI_UI_CHECK_ROOT` to the current `ios-ai-ui-check` checkout you want to use; this keeps it valid when either checkout is moved or cloned elsewhere.
 For a manifest-driven refresh, this repo also ships `scripts/refresh-scaffold.py`, which reads `.github/ai-ui/scaffold-manifest.json`, compares current generated files against recorded scaffold hashes, and then replays the scaffold with the recorded config.
+External files passed through `--scenario-template` or `--planner-context-template` are initial seeds, not permanent machine-local dependencies. The manifest records the generated app-owned scenario or planner-context file as the portable source for later customizable refreshes. Templates already checked into the app repo remain repo-relative references.
+
+```bash
+cd /path/to/app-repo
+export IOS_AI_UI_CHECK_ROOT=/path/to/ios-ai-ui-check
+python3 "${IOS_AI_UI_CHECK_ROOT}/scripts/refresh-scaffold.py" --repo-root .
+```
 
 If `ios-ai-ui-check` is private, add an `ACTION_REPO_TOKEN` secret in the app repo so the generated workflow can check out the private action repository.
 
@@ -287,14 +294,16 @@ Optional:
 - `upload-artifacts`: default `true`
 - `record-video`: default `true`
 - `comment-on-pr`: default `true`; mainly useful when a pull_request caller wants to suppress the default PR comment
-- `max-duration-seconds`: default `300`
+- `github-token`: optional token override for managed PR comments; defaults to the current workflow token
+- `comment-author-login`: default `github-actions[bot]`; set it to the GitHub login associated with `github-token` when using a custom user or bot token so reruns update the same comment
+- `max-duration-seconds`: default `300`; applied independently to each inspection, planner, and runner command rather than as one shared end-to-end budget
 
 ## Outputs
 
 - `status`
 - `scenario-path`
 - `summary-path`
-- `video-path`: populated only when video recording is enabled and a video file was captured
+- `video-path`: populated only when video recording is enabled and a non-empty recording finalized successfully; capture failures are reported but do not replace the UI-check result
 - `artifact-url`
 - `before-planning-ui-tree-path`: populated when AI planning captured a pre-planning UI tree
 - `before-planning-screenshot-path`: populated when AI planning captured a pre-planning screenshot

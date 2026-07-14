@@ -29,6 +29,7 @@ python3 scripts/ai_ui_contract.py write-schema --output schemas/scenario.schema.
 ```
 
 Do not hand-edit the schema copy unless you are also changing the canonical helper in the same diff.
+The maintenance check regenerates the schema into a temporary file and fails on drift; it never repairs a stale checked-in schema during CI.
 
 ## Scaffold Provenance
 
@@ -43,6 +44,14 @@ Use it to answer:
 - which recorded generated-file hashes still match the local repo
 
 Generated shell, Swift, Markdown, and workflow files also carry a short header that points back to the manifest.
+The manifest's `refresh_command` is location-independent: it expects to run from the app repo root and resolves the selected action checkout through `IOS_AI_UI_CHECK_ROOT`. It deliberately avoids recording absolute app, action-checkout, or template paths, so cloning or moving either repository does not stale the command.
+An external scenario or planner-context template is treated as an initial seed. Its generated customizable file becomes the manifest's portable refresh source, while an original template that lives inside the app repo is recorded as a repo-relative source. The corresponding `*_template_mode` field makes that distinction explicit without retaining a machine-local path.
+
+```bash
+cd /path/to/app-repo
+export IOS_AI_UI_CHECK_ROOT=/path/to/ios-ai-ui-check
+python3 "${IOS_AI_UI_CHECK_ROOT}/scripts/refresh-scaffold.py" --repo-root .
+```
 
 ## Managed File Policy
 

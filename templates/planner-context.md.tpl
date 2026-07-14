@@ -5,8 +5,8 @@ Update this file with app-specific guidance for the default AI planner.
 
 ## App
 
-- Scheme: `__SCHEME__`
-- Provided scenario override path: `__SCENARIO_PATH__`
+- Scheme: __SCHEME_MARKDOWN__
+- Provided scenario override path: __SCENARIO_PATH_MARKDOWN__
 
 ## Preferred deterministic launch
 

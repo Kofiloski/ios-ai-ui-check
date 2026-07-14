@@ -5,11 +5,14 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "name",
     "steps"
   ],
   "properties": {
     "name": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "description": {
       "type": [
@@ -21,58 +24,228 @@
       "type": "array",
       "minItems": 1,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "action"
-        ],
-        "properties": {
-          "action": {
-            "type": "string",
-            "enum": [
-              "launch",
-              "tap",
-              "type",
-              "wait",
-              "assertVisible",
-              "assertText",
-              "screenshot"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "launch"
+              },
+              "arguments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "wait_seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "tap"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "timeout": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "id"
+                ]
+              },
+              {
+                "required": [
+                  "label"
+                ]
+              }
             ]
           },
-          "id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "output": {
-            "type": "string"
-          },
-          "seconds": {
-            "type": "number"
-          },
-          "wait_seconds": {
-            "type": "number"
-          },
-          "timeout": {
-            "type": "number"
-          },
-          "arguments": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "text"
+            ],
+            "properties": {
+              "action": {
+                "const": "type"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "timeout": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
             }
           },
-          "environment": {
+          {
             "type": "object",
-            "additionalProperties": {
-              "type": "string"
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "seconds"
+            ],
+            "properties": {
+              "action": {
+                "const": "wait"
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "assertVisible"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "timeout": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "id"
+                ]
+              },
+              {
+                "required": [
+                  "label"
+                ]
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "text"
+            ],
+            "properties": {
+              "action": {
+                "const": "assertText"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "timeout": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "screenshot"
+              },
+              "output": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "not": {
+                  "anyOf": [
+                    {
+                      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+                    },
+                    {
+                      "pattern": "(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)"
+                    },
+                    {
+                      "pattern": "^\\.(?:[\\\\/]+\\.)*[\\\\/]*$"
+                    }
+                  ]
+                }
+              }
             }
           }
-        }
+        ]
       }
     }
   }

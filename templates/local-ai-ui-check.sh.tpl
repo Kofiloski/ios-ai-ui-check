@@ -3,9 +3,12 @@ __SCAFFOLD_HEADER_SHELL__
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_SCENARIO_PATH="$ROOT_DIR/__SCENARIO_PATH__"
-SIM_DEVICE_NAME="${SIM_DEVICE_NAME:-__SIMULATOR_NAME__}"
-SIM_DEVICE_RUNTIME="${SIM_DEVICE_RUNTIME:-__SIMULATOR_RUNTIME__}"
+DEFAULT_SCENARIO_RELATIVE_PATH=__SCENARIO_PATH_SHELL__
+DEFAULT_SIMULATOR_NAME=__SIMULATOR_NAME_SHELL__
+DEFAULT_SIMULATOR_RUNTIME=__SIMULATOR_RUNTIME_SHELL__
+DEFAULT_SCENARIO_PATH="$ROOT_DIR/$DEFAULT_SCENARIO_RELATIVE_PATH"
+SIM_DEVICE_NAME="${SIM_DEVICE_NAME:-$DEFAULT_SIMULATOR_NAME}"
+SIM_DEVICE_RUNTIME="${SIM_DEVICE_RUNTIME:-$DEFAULT_SIMULATOR_RUNTIME}"
 SIM_DEVICE_ID="${SIM_DEVICE_ID:-}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$ROOT_DIR/artifacts/ai-ui/local-$(date +%Y%m%d-%H%M%S)}"
 DERIVED_DATA_PATH="${AI_UI_DERIVED_DATA_PATH:-$ROOT_DIR/.derivedData/ai-ui}"
@@ -29,15 +32,15 @@ Options:
   --planner-model MODEL     Planner model passed through as AI_UI_PLANNER_MODEL.
   --artifacts-dir DIR       Directory for logs, screenshots, and xcresult output.
   --derived-data-path DIR   DerivedData path for build-for-testing output.
-  --simulator-name NAME     Simulator device name. Default: __SIMULATOR_NAME__
-  --simulator-runtime VER   Simulator runtime version. Default: __SIMULATOR_RUNTIME__
+  --simulator-name NAME     Simulator device name. Default: $DEFAULT_SIMULATOR_NAME
+  --simulator-runtime VER   Simulator runtime version. Default: $DEFAULT_SIMULATOR_RUNTIME
   --simulator-id UDID       Explicit simulator UDID.
   -h, --help                Show this help text.
 
 Examples:
   $(basename "$0") --goal "test adding an ingredient"
   $(basename "$0") --use-example-scenario
-  $(basename "$0") --scenario __SCENARIO_PATH__
+  $(basename "$0") --scenario $DEFAULT_SCENARIO_RELATIVE_PATH
 
 Notes:
   - AI planning requires OPENAI_API_KEY and scripts/plan-ai-ui-scenario.sh.
@@ -166,6 +169,9 @@ export AI_UI_ARTIFACTS_DIR="$ARTIFACTS_DIR"
 export AI_UI_SIMULATOR_NAME="$SIM_DEVICE_NAME"
 export AI_UI_SIMULATOR_RUNTIME="$SIM_DEVICE_RUNTIME"
 export AI_UI_DERIVED_DATA_PATH="$DERIVED_DATA_PATH"
+export AI_UI_FORCE_BUILD_FOR_TESTING=1
+export AI_UI_BUILD_FOR_TESTING_MARKER_PATH="$ARTIFACTS_DIR/build-for-testing-complete"
+rm -f "$AI_UI_BUILD_FOR_TESTING_MARKER_PATH"
 
 if [[ -n "$SIM_DEVICE_ID" ]]; then
   export AI_UI_SIMULATOR_UDID="$SIM_DEVICE_ID"

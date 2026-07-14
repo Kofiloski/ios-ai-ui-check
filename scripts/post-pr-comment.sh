@@ -15,6 +15,11 @@ if [[ -z "${GITHUB_EVENT_PATH:-}" || ! -f "${GITHUB_EVENT_PATH}" ]]; then
   exit 0
 fi
 
+if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
+  echo "GITHUB_REPOSITORY is not available. Skipping PR comment."
+  exit 0
+fi
+
 PR_NUMBER="$(python3 - "${GITHUB_EVENT_PATH}" <<'PY'
 import json
 import sys
@@ -22,11 +27,10 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-pull_request = payload.get("pull_request")
-if not pull_request:
-    raise SystemExit("")
-
-print(pull_request["number"])
+pull_request = payload.get("pull_request") or {}
+number = pull_request.get("number")
+if isinstance(number, int) and number > 0:
+    print(number)
 PY
 )"
 
@@ -93,43 +97,92 @@ with open(payload_path, "w", encoding="utf-8") as handle:
     json.dump({"body": body}, handle)
 PY
 
-curl -sS \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  "${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
-  > "${COMMENTS_PATH}"
+EXPECTED_COMMENT_AUTHOR_LOGIN="${AI_UI_COMMENT_AUTHOR_LOGIN:-github-actions[bot]}"
+MAX_COMMENT_PAGES="${AI_UI_MAX_COMMENT_PAGES:-100}"
+if [[ "${#EXPECTED_COMMENT_AUTHOR_LOGIN}" -gt 100 || ! "${EXPECTED_COMMENT_AUTHOR_LOGIN}" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*(\[bot\])?$ ]]; then
+  echo "AI_UI_COMMENT_AUTHOR_LOGIN must be a valid GitHub user or bot login" >&2
+  exit 1
+fi
 
-EXISTING_COMMENT_ID="$(
-  COMMENT_MARKER="${COMMENT_MARKER}" \
-  python3 - "${COMMENTS_PATH}" <<'PY'
+if [[ ! "${MAX_COMMENT_PAGES}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "AI_UI_MAX_COMMENT_PAGES must be a positive integer" >&2
+  exit 1
+fi
+
+api_url="${GITHUB_API_URL:-https://api.github.com}"
+comments_endpoint="${api_url}/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
+EXISTING_COMMENT_ID=""
+page=1
+
+while [[ "${page}" -le "${MAX_COMMENT_PAGES}" ]]; do
+  curl -fsS --retry 2 --retry-delay 1 \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "${comments_endpoint}?per_page=100&page=${page}" \
+    > "${COMMENTS_PATH}"
+
+  PAGE_METADATA="$(
+    COMMENT_MARKER="${COMMENT_MARKER}" \
+    EXPECTED_COMMENT_AUTHOR_LOGIN="${EXPECTED_COMMENT_AUTHOR_LOGIN}" \
+    python3 - "${COMMENTS_PATH}" <<'PY'
 import json
 import os
 import sys
 
 comment_marker = os.environ["COMMENT_MARKER"]
+expected_author_login = os.environ["EXPECTED_COMMENT_AUTHOR_LOGIN"]
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-for comment in reversed(payload):
-    body = comment.get("body", "")
-    if comment_marker in body:
-        print(comment["id"])
-        break
-PY
-)"
+if not isinstance(payload, list):
+    raise SystemExit("GitHub issue-comments response was not a JSON array")
 
-comment_endpoint="${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
+existing_comment_id = ""
+for comment in reversed(payload):
+    body = comment.get("body") or ""
+    author = comment.get("user") or {}
+    if (
+        body.startswith(comment_marker + "\n")
+        and str(author.get("login") or "").casefold() == expected_author_login.casefold()
+    ):
+        existing_comment_id = str(comment["id"])
+        break
+
+print(f"{len(payload)}\t{existing_comment_id}")
+PY
+  )"
+
+  IFS=$'\t' read -r PAGE_COUNT PAGE_COMMENT_ID <<< "${PAGE_METADATA}"
+  if [[ -n "${PAGE_COMMENT_ID:-}" ]]; then
+    EXISTING_COMMENT_ID="${PAGE_COMMENT_ID}"
+  fi
+
+  if [[ "${PAGE_COUNT}" -lt 100 ]]; then
+    break
+  fi
+
+  page=$((page + 1))
+done
+
+if [[ "${page}" -gt "${MAX_COMMENT_PAGES}" && "${PAGE_COUNT:-100}" -eq 100 ]]; then
+  echo "PR comment lookup exceeded AI_UI_MAX_COMMENT_PAGES=${MAX_COMMENT_PAGES}" >&2
+  exit 1
+fi
+
+comment_endpoint="${comments_endpoint}"
 comment_method="POST"
 if [[ -n "${EXISTING_COMMENT_ID}" ]]; then
-  comment_endpoint="${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING_COMMENT_ID}"
+  comment_endpoint="${api_url}/repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING_COMMENT_ID}"
   comment_method="PATCH"
 fi
 
-curl -sS \
+curl -fsS --retry 2 --retry-delay 1 \
   -X "${comment_method}" \
   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
   -H "Content-Type: application/json" \
   "${comment_endpoint}" \
   --data @"${PAYLOAD_PATH}" >/dev/null

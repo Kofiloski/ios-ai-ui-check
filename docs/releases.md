@@ -65,6 +65,7 @@ That script runs the maintenance suite, verifies expected executable bits, and p
 ## Manual Release Workflow
 
 Use `.github/workflows/release.yml` from the default branch.
+The workflow rejects dispatches from any other branch and serializes release jobs so two tag updates cannot race each other.
 
 Inputs:
 
@@ -74,7 +75,10 @@ Inputs:
 The workflow will:
 
 1. validate the requested semantic tag
-2. run `./scripts/check-release-readiness.sh`
-3. create and push the exact release tag
-4. optionally move the matching major tag
-5. create the GitHub release notes
+2. verify that the run is on the repository default branch
+3. run `./scripts/check-release-readiness.sh`
+4. create and push the exact release tag, or verify that an existing tag points to the same commit
+5. create the GitHub release notes if they do not already exist
+6. optionally move the matching major tag
+
+The release is resumable. Rerunning the same version from the same commit continues past an existing exact tag or GitHub release, while an exact tag that points to a different commit remains a hard failure.

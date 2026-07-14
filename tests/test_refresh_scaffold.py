@@ -71,10 +71,38 @@ class RefreshScaffoldTests(unittest.TestCase):
 
         self.assertNotIn("--preserve-customizable-files", command)
         self.assertIn("--scenario-template", command)
-        self.assertIn("/tmp/scenario.json", command)
+        self.assertIn(str(Path("/tmp/scenario.json").resolve()), command)
         self.assertIn("--planner-context-template", command)
-        self.assertIn("/tmp/planner-context.md", command)
+        self.assertIn(str(Path("/tmp/planner-context.md").resolve()), command)
         self.assertIn("--skip-workflow", command)
+
+    def test_build_command_resolves_repo_relative_template_paths(self) -> None:
+        manifest = {
+            "tool": "ios-ai-ui-check",
+            "project_path": "SampleApp.xcodeproj",
+            "scheme": "SampleApp",
+            "scenario_path": ".github/ai-ui/verify-primary-flow.json",
+            "simulator_name": "iPhone 17 Pro",
+            "simulator_runtime": "26.2",
+            "scenario_template": ".github/ai-ui/source-scenario.json",
+            "planner_context_template": "docs/planner-context.md",
+        }
+
+        command = refresh_scaffold.build_command(
+            repo_root=Path("/tmp/SampleApp"),
+            manifest=manifest,
+            dry_run=False,
+            refresh_customizable_files=True,
+        )
+
+        self.assertIn(
+            str(Path("/tmp/SampleApp/.github/ai-ui/source-scenario.json").resolve()),
+            command,
+        )
+        self.assertIn(
+            str(Path("/tmp/SampleApp/docs/planner-context.md").resolve()),
+            command,
+        )
 
     def test_collect_local_modifications_reports_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +167,69 @@ class RefreshScaffoldTests(unittest.TestCase):
             self.assertIn(
                 "customizable modified: .github/ai-ui/planner-context.md (will be preserved)",
                 completed.stdout,
+            )
+
+    def test_default_refresh_preserves_customizable_files_when_original_templates_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_root = Path(tmp)
+            repo_root = temp_root / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+            scenario_template = temp_root / "scenario.json"
+            context_template = temp_root / "planner-context.md"
+            scenario_template.write_text(
+                '{"name":"Custom","steps":[{"action":"launch"}]}\n',
+                encoding="utf-8",
+            )
+            context_template.write_text("Custom planner context\n", encoding="utf-8")
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCAFFOLD_SCRIPT_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project",
+                    "FixtureApp.xcodeproj",
+                    "--scheme",
+                    "FixtureApp",
+                    "--scenario-template",
+                    str(scenario_template),
+                    "--planner-context-template",
+                    str(context_template),
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            scenario_template.unlink()
+            context_template.unlink()
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn(
+                '"name":"Custom"',
+                (repo_root / ".github" / "ai-ui" / "verify-primary-flow.json").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                "Custom planner context",
+                (repo_root / ".github" / "ai-ui" / "planner-context.md").read_text(
+                    encoding="utf-8"
+                ),
             )
 
     def test_build_check_result_flags_unavailable_hashes(self) -> None:

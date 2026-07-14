@@ -144,8 +144,20 @@ def build_command(
 
     optional_string(manifest, "app_target", command, "--app-target")
     optional_string(manifest, "ui_test_target", command, "--ui-test-target")
-    optional_string(manifest, "scenario_template", command, "--scenario-template")
-    optional_string(manifest, "planner_context_template", command, "--planner-context-template")
+    optional_template_path(
+        manifest,
+        "scenario_template",
+        command,
+        "--scenario-template",
+        repo_root=repo_root,
+    )
+    optional_template_path(
+        manifest,
+        "planner_context_template",
+        command,
+        "--planner-context-template",
+        repo_root=repo_root,
+    )
 
     if manifest.get("workflow_generated") is False:
         command.append("--skip-workflow")
@@ -348,6 +360,23 @@ def optional_string(
     value = manifest.get(key)
     if isinstance(value, str) and value:
         command.extend([flag, value])
+
+
+def optional_template_path(
+    manifest: dict[str, object],
+    key: str,
+    command: list[str],
+    flag: str,
+    *,
+    repo_root: Path,
+) -> None:
+    value = manifest.get(key)
+    if not isinstance(value, str) or not value:
+        return
+    template_path = Path(value).expanduser()
+    if not template_path.is_absolute():
+        template_path = repo_root / template_path
+    command.extend([flag, str(template_path.resolve())])
 
 
 def fail(message: str) -> NoReturn:

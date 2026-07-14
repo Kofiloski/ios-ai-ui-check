@@ -32,6 +32,7 @@ class PostPRCommentScriptTests(unittest.TestCase):
                         {
                             "id": 42,
                             "body": "<!-- ios-ai-ui-check:managed-comment -->\nold comment",
+                            "user": {"login": "github-actions[bot]"},
                         },
                     ]
                 ),
@@ -67,7 +68,7 @@ class PostPRCommentScriptTests(unittest.TestCase):
                       previous="$arg"
                     done
 
-                    if [[ "$endpoint" == *"?per_page=100" ]]; then
+                    if [[ "$endpoint" == *"?per_page=100&page=1" ]]; then
                       cat "$FAKE_CURL_COMMENTS_JSON"
                       exit 0
                     fi
@@ -152,7 +153,7 @@ class PostPRCommentScriptTests(unittest.TestCase):
                       previous="$arg"
                     done
 
-                    if [[ "$endpoint" == *"?per_page=100" ]]; then
+                    if [[ "$endpoint" == *"?per_page=100&page=1" ]]; then
                       cat "$FAKE_CURL_COMMENTS_JSON"
                       exit 0
                     fi
@@ -192,6 +193,187 @@ class PostPRCommentScriptTests(unittest.TestCase):
             payload = json.loads(payload_capture.read_text(encoding="utf-8"))
             self.assertLessEqual(len(payload["body"]), 60000)
             self.assertIn("Full summary truncated", payload["body"])
+
+    def test_paginates_and_ignores_spoofed_marker_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            first_page = root / "comments-page-1.json"
+            second_page = root / "comments-page-2.json"
+            payload_capture = root / "payload.json"
+            method_capture = root / "method.txt"
+            endpoint_capture = root / "endpoint.txt"
+            event_path = root / "event.json"
+
+            page_one_comments = [
+                {"id": index, "body": "unrelated", "user": {"login": "someone"}}
+                for index in range(1, 100)
+            ]
+            page_one_comments.append(
+                {
+                    "id": 100,
+                    "body": "<!-- ios-ai-ui-check:managed-comment -->\nspoofed",
+                    "user": {"login": "untrusted-user"},
+                }
+            )
+            first_page.write_text(json.dumps(page_one_comments), encoding="utf-8")
+            second_page.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": 142,
+                            "body": "<!-- ios-ai-ui-check:managed-comment -->\nmanaged",
+                            "user": {"login": "release_bot[bot]"},
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            event_path.write_text(
+                json.dumps({"pull_request": {"number": 11}}),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    endpoint=""
+                    method="GET"
+                    data_arg=""
+                    previous=""
+                    for arg in "$@"; do
+                      if [[ "$previous" == "-X" ]]; then
+                        method="$arg"
+                      elif [[ "$previous" == "--data" ]]; then
+                        data_arg="$arg"
+                      fi
+                      if [[ "$arg" == http* ]]; then
+                        endpoint="$arg"
+                      fi
+                      previous="$arg"
+                    done
+
+                    if [[ "$endpoint" == *"?per_page=100&page=1" ]]; then
+                      cat "$FAKE_CURL_FIRST_PAGE"
+                      exit 0
+                    fi
+                    if [[ "$endpoint" == *"?per_page=100&page=2" ]]; then
+                      cat "$FAKE_CURL_SECOND_PAGE"
+                      exit 0
+                    fi
+
+                    if [[ -n "$data_arg" && "$data_arg" == @* ]]; then
+                      cp "${data_arg#@}" "$FAKE_CURL_PAYLOAD_CAPTURE"
+                    fi
+                    printf '%s' "$method" > "$FAKE_CURL_METHOD_CAPTURE"
+                    printf '%s' "$endpoint" > "$FAKE_CURL_ENDPOINT_CAPTURE"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "test-token",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "STATUS": "passed",
+                    "AI_UI_COMMENT_AUTHOR_LOGIN": "Release_Bot[bot]",
+                    "FAKE_CURL_FIRST_PAGE": str(first_page),
+                    "FAKE_CURL_SECOND_PAGE": str(second_page),
+                    "FAKE_CURL_PAYLOAD_CAPTURE": str(payload_capture),
+                    "FAKE_CURL_METHOD_CAPTURE": str(method_capture),
+                    "FAKE_CURL_ENDPOINT_CAPTURE": str(endpoint_capture),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(payload_capture.exists())
+            self.assertEqual(method_capture.read_text(encoding="utf-8"), "PATCH")
+            self.assertIn(
+                "/issues/comments/142",
+                endpoint_capture.read_text(encoding="utf-8"),
+            )
+
+    def test_rejects_invalid_expected_comment_author_login(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps({"pull_request": {"number": 12}}),
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "GITHUB_TOKEN": "test-token",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "AI_UI_COMMENT_AUTHOR_LOGIN": "bad/login",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("valid GitHub user or bot login", result.stderr)
+
+    def test_fails_when_github_comment_api_returns_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_curl = root / "curl"
+            event_path = root / "event.json"
+            event_path.write_text(
+                json.dumps({"pull_request": {"number": 13}}),
+                encoding="utf-8",
+            )
+            fake_curl.write_text(
+                "#!/usr/bin/env bash\nexit 22\n",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{root}:{env['PATH']}",
+                    "GITHUB_TOKEN": "test-token",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": "owner/repo",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(SCRIPT_PATH)],
+                cwd=REPO_ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
+import os
+import plistlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -38,27 +42,40 @@ class ScaffoldAppRepoTests(unittest.TestCase):
             skip_workflow=False,
         )
 
-    def test_build_refresh_command_preserves_non_default_options(self) -> None:
-        command = scaffold_app_repo.build_refresh_command(
-            script_path=Path("/opt/ios-ai-ui-check/scripts/scaffold-app-repo.py"),
-            repo_root=Path("/tmp/SampleApp"),
-            project_relative_path="SampleApp.xcodeproj",
-            args=self.make_args(),
-            app_target_name="SampleAppApp",
-            ui_test_target_name="SampleAppUITests",
-        )
+    def test_build_refresh_command_is_location_independent(self) -> None:
+        command = scaffold_app_repo.build_refresh_command()
 
-        self.assertIn("--repo-root /tmp/SampleApp", command)
-        self.assertIn("--project SampleApp.xcodeproj", command)
-        self.assertIn("--scheme SampleApp", command)
-        self.assertIn("--app-target SampleAppApp", command)
-        self.assertIn("--ui-test-target SampleAppUITests", command)
-        self.assertRegex(command, r"--scenario-template\s+.+scenario\.json")
-        self.assertRegex(
-            command,
-            r"--planner-context-template\s+.+planner-context\.md",
+        self.assertIn("${IOS_AI_UI_CHECK_ROOT:?", command)
+        self.assertIn("/scripts/refresh-scaffold.py", command)
+        self.assertIn("--repo-root .", command)
+        self.assertNotIn("/tmp/SampleApp", command)
+        self.assertNotIn("/opt/ios-ai-ui-check", command)
+
+    def test_context_encoders_round_trip_hostile_strings(self) -> None:
+        value = "Developer's: \"$(touch injected)\" `edge`\nnext"
+
+        self.assertEqual(json.loads(scaffold_app_repo.yaml_string(value)), value)
+        self.assertEqual(ast.literal_eval(scaffold_app_repo.python_string(value)), value)
+        expression = scaffold_app_repo.github_expression_string(value)
+        self.assertTrue(expression.startswith("fromJSON('") and expression.endswith("')"))
+        expression_json = expression[len("fromJSON('") : -2].replace("''", "'")
+        self.assertEqual(json.loads(expression_json), value)
+        yaml_expression = json.loads(
+            scaffold_app_repo.github_literal_expression_yaml(value)
         )
-        self.assertIn("--simulator-name 'iPhone 17 Pro Max'", command)
+        self.assertEqual(yaml_expression, "${{ " + expression + " }}")
+
+    def test_template_render_does_not_reprocess_inserted_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            template_path = Path(tmp) / "template.txt"
+            template_path.write_text("__FIRST__ __SECOND__\n", encoding="utf-8")
+
+            rendered = scaffold_app_repo.render_template(
+                template_path,
+                {"FIRST": "__SECOND__", "SECOND": "resolved"},
+            )
+
+        self.assertEqual(rendered, "__SECOND__ resolved\n")
 
     def test_build_scaffold_headers_reference_manifest(self) -> None:
         headers = scaffold_app_repo.build_scaffold_headers(
@@ -75,7 +92,6 @@ class ScaffoldAppRepoTests(unittest.TestCase):
         args = self.make_args()
         manifest = scaffold_app_repo.build_scaffold_manifest(
             repo_root=Path("/tmp/SampleApp"),
-            action_repo_root=Path("/opt/ios-ai-ui-check"),
             project_relative_path="SampleApp.xcodeproj",
             scheme_name="SampleApp",
             app_target_name="SampleAppApp",
@@ -84,7 +100,7 @@ class ScaffoldAppRepoTests(unittest.TestCase):
             simulator_runtime="26.2",
             scenario_relative_path=Path(".github/ai-ui/verify-primary-flow.json"),
             scaffold_manifest_relative_path=Path(".github/ai-ui/scaffold-manifest.json"),
-            refresh_command="python3 scaffold-app-repo.py --repo-root /tmp/SampleApp --project SampleApp.xcodeproj --scheme SampleApp",
+            refresh_command=scaffold_app_repo.build_refresh_command(),
             source_repo="owner/ios-ai-ui-check",
             source_commit="abcdef1234567890",
             generated_files=[
@@ -99,12 +115,40 @@ class ScaffoldAppRepoTests(unittest.TestCase):
         self.assertEqual(manifest["source_commit"], "abcdef1234567890")
         self.assertEqual(manifest["project_path"], "SampleApp.xcodeproj")
         self.assertEqual(manifest["source_repo"], "owner/ios-ai-ui-check")
+        self.assertEqual(manifest["repo_root"], ".")
         self.assertTrue(manifest["workflow_generated"])
         self.assertIn("scripts/run-ai-ui-scenario.sh", manifest["generated_files"])
         self.assertEqual(
             manifest["refresh_command"],
-            "python3 scaffold-app-repo.py --repo-root /tmp/SampleApp --project SampleApp.xcodeproj --scheme SampleApp",
+            scaffold_app_repo.build_refresh_command(),
         )
+
+    def test_manifest_records_templates_inside_repo_as_relative_paths(self) -> None:
+        args = self.make_args()
+        args.scenario_template = Path("/tmp/SampleApp/config/scenario.json")
+        args.planner_context_template = Path("/tmp/SampleApp/config/context.md")
+
+        manifest = scaffold_app_repo.build_scaffold_manifest(
+            repo_root=Path("/tmp/SampleApp"),
+            project_relative_path="SampleApp.xcodeproj",
+            scheme_name="SampleApp",
+            app_target_name="SampleAppApp",
+            ui_test_target_name="SampleAppUITests",
+            simulator_name="iPhone 17 Pro",
+            simulator_runtime="26.2",
+            scenario_relative_path=Path(".github/ai-ui/verify-primary-flow.json"),
+            scaffold_manifest_relative_path=Path(".github/ai-ui/scaffold-manifest.json"),
+            refresh_command="python3 scaffold-app-repo.py",
+            source_repo="owner/ios-ai-ui-check",
+            source_commit="abcdef1234567890",
+            generated_files=[],
+            args=args,
+        )
+
+        self.assertEqual(manifest["scenario_template"], "config/scenario.json")
+        self.assertEqual(manifest["planner_context_template"], "config/context.md")
+        self.assertEqual(manifest["scenario_template_mode"], "repo-relative")
+        self.assertEqual(manifest["planner_context_template_mode"], "repo-relative")
 
     def test_with_manifest_hashes_records_generated_file_hashes(self) -> None:
         manifest = {"tool": "ios-ai-ui-check"}
@@ -150,6 +194,73 @@ class ScaffoldAppRepoTests(unittest.TestCase):
         self.assertEqual(plist["archiveVersion"], "1")
         self.assertEqual(original_project_xml, project_file.read_bytes())
 
+    def test_source_file_reference_is_scoped_to_its_group(self) -> None:
+        objects = {
+            "GROUP_A": {"isa": "PBXGroup", "children": ["FILE_A"]},
+            "GROUP_B": {"isa": "PBXGroup", "children": []},
+            "FILE_A": {
+                "isa": "PBXFileReference",
+                "lastKnownFileType": "sourcecode.swift",
+                "path": "ScenarioRunnerUITests.swift",
+                "sourceTree": "<group>",
+            },
+        }
+
+        file_reference = scaffold_app_repo.ensure_file_reference(
+            objects=objects,
+            group_id="GROUP_B",
+            path="ScenarioRunnerUITests.swift",
+            last_known_file_type="sourcecode.swift",
+        )
+
+        self.assertNotEqual(file_reference, "FILE_A")
+        self.assertIn(file_reference, objects["GROUP_B"]["children"])
+        self.assertEqual(objects[file_reference]["path"], "ScenarioRunnerUITests.swift")
+
+    def test_shared_legacy_source_reference_is_cloned_and_phase_is_deduplicated(self) -> None:
+        objects = {
+            "ROOT_GROUP": {"isa": "PBXGroup", "children": ["FILE_SHARED"]},
+            "UI_TEST_GROUP": {"isa": "PBXGroup", "children": ["FILE_SHARED"]},
+            "FILE_SHARED": {
+                "isa": "PBXFileReference",
+                "lastKnownFileType": "sourcecode.swift",
+                "path": "ScenarioRunnerUITests.swift",
+                "sourceTree": "<group>",
+            },
+            "BUILD_FILE_OLD": {"isa": "PBXBuildFile", "fileRef": "FILE_SHARED"},
+            "BUILD_FILE_DUPLICATE": {"isa": "PBXBuildFile", "fileRef": "FILE_SHARED"},
+            "UI_SOURCES_PHASE": {
+                "isa": "PBXSourcesBuildPhase",
+                "files": ["BUILD_FILE_OLD", "BUILD_FILE_DUPLICATE"],
+            },
+            "UI_TARGET": {
+                "isa": "PBXNativeTarget",
+                "buildPhases": ["UI_SOURCES_PHASE"],
+            },
+        }
+
+        file_reference = scaffold_app_repo.ensure_file_reference(
+            objects=objects,
+            group_id="UI_TEST_GROUP",
+            path="ScenarioRunnerUITests.swift",
+            last_known_file_type="sourcecode.swift",
+            migrate_build_phase_ids=("UI_SOURCES_PHASE",),
+        )
+        scaffold_app_repo.ensure_build_file_in_phase(
+            objects=objects,
+            phase_id=objects["UI_TARGET"]["buildPhases"][0],
+            file_ref_id=file_reference,
+            comment="ScenarioRunnerUITests.swift in Sources",
+        )
+
+        self.assertNotEqual(file_reference, "FILE_SHARED")
+        self.assertEqual(objects["ROOT_GROUP"]["children"], ["FILE_SHARED"])
+        self.assertEqual(objects["UI_TEST_GROUP"]["children"], [file_reference])
+        phase_build_files = objects["UI_SOURCES_PHASE"]["files"]
+        self.assertEqual(len(phase_build_files), 1)
+        self.assertEqual(objects[phase_build_files[0]]["fileRef"], file_reference)
+        self.assertNotIn("BUILD_FILE_DUPLICATE", objects)
+
     def test_scaffold_fixture_app_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp) / "FixtureApp"
@@ -191,6 +302,752 @@ class ScaffoldAppRepoTests(unittest.TestCase):
                 / "FixtureApp.xcscheme"
             ).read_text(encoding="utf-8")
             self.assertIn("FixtureAppUITests.xctest", scheme_text)
+
+    def test_manifest_refresh_command_survives_moved_app_and_action_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_app = root / "original" / "FixtureApp"
+            original_app.parent.mkdir()
+            shutil.copytree(FIXTURE_APP_ROOT, original_app)
+            external_templates = root / "machine-local-seeds"
+            external_templates.mkdir()
+            scenario_seed = external_templates / "scenario.json"
+            planner_context_seed = external_templates / "planner-context.md"
+            scenario_seed.write_text(
+                '{"name":"Seeded scenario","steps":[{"action":"launch"}]}\n',
+                encoding="utf-8",
+            )
+            planner_context_seed.write_text(
+                "Machine-local initial planner seed\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(original_app),
+                    "--project",
+                    "FixtureApp.xcodeproj",
+                    "--scheme",
+                    "FixtureApp",
+                    "--scenario-template",
+                    str(scenario_seed),
+                    "--planner-context-template",
+                    str(planner_context_seed),
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            manifest_path = original_app / ".github" / "ai-ui" / "scaffold-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            refresh_command = manifest["refresh_command"]
+            self.assertNotIn(str(original_app), refresh_command)
+            self.assertNotIn(str(REPO_ROOT), refresh_command)
+            self.assertNotIn(str(external_templates), json.dumps(manifest))
+            self.assertEqual(
+                manifest["scenario_template"],
+                ".github/ai-ui/verify-primary-flow.json",
+            )
+            self.assertEqual(
+                manifest["planner_context_template"],
+                ".github/ai-ui/planner-context.md",
+            )
+            self.assertEqual(
+                manifest["scenario_template_mode"],
+                "generated-customizable-file",
+            )
+            self.assertEqual(
+                manifest["planner_context_template_mode"],
+                "generated-customizable-file",
+            )
+            scenario_seed.unlink()
+            planner_context_seed.unlink()
+
+            moved_app = root / "moved" / "FixtureAppClone"
+            moved_app.parent.mkdir()
+            original_app.rename(moved_app)
+            action_clone = root / "action-clone"
+            shutil.copytree(
+                REPO_ROOT,
+                action_clone,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            )
+            env = os.environ.copy()
+            env["IOS_AI_UI_CHECK_ROOT"] = str(action_clone)
+
+            completed = subprocess.run(
+                ["bash", "-c", refresh_command],
+                cwd=moved_app,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            refreshed_manifest = json.loads(
+                (moved_app / ".github" / "ai-ui" / "scaffold-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(refreshed_manifest["refresh_command"], refresh_command)
+            self.assertIn(
+                "Seeded scenario",
+                (moved_app / ".github" / "ai-ui" / "verify-primary-flow.json").read_text(
+                    encoding="utf-8"
+                ),
+            )
+
+            explicit_refresh = subprocess.run(
+                [
+                    sys.executable,
+                    str(action_clone / "scripts" / "refresh-scaffold.py"),
+                    "--repo-root",
+                    str(moved_app),
+                    "--refresh-customizable-files",
+                ],
+                cwd=action_clone,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(explicit_refresh.returncode, 0, explicit_refresh.stderr)
+            planner_context = (
+                moved_app / ".github" / "ai-ui" / "planner-context.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Machine-local initial planner seed", planner_context)
+            self.assertEqual(
+                planner_context.count("Generated by ios-ai-ui-check scaffold."),
+                1,
+            )
+
+    def test_hostile_scaffold_values_are_safe_in_every_generated_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo_root = root / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+
+            project_name = (
+                'Fixture: "$(touch project-injected)"\'s `edge` '
+                '${{ github.token }}\nproject.xcodeproj'
+            )
+            scheme_name = (
+                'Fixture: "$(touch scheme-injected)"\'s `edge` '
+                '${{ github.ref }}\nscheme'
+            )
+            ui_test_target = 'UI Test\'s: "$(touch ui-injected)" `edge`'
+            simulator_name = 'iPhone Dev\'s: "$(touch simulator-injected)" `edge`'
+            simulator_runtime = '26.2: "$(touch runtime-injected)" `edge`'
+            scenario_file_name = 'scenario: "$(touch scenario-injected)"\'s.json'
+
+            original_project = repo_root / "FixtureApp.xcodeproj"
+            hostile_project = repo_root / project_name
+            original_project.rename(hostile_project)
+            original_scheme = (
+                hostile_project
+                / "xcshareddata"
+                / "xcschemes"
+                / "FixtureApp.xcscheme"
+            )
+            original_scheme.rename(original_scheme.with_name(f"{scheme_name}.xcscheme"))
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project",
+                    project_name,
+                    "--scheme",
+                    scheme_name,
+                    "--app-target",
+                    "FixtureApp",
+                    "--ui-test-target",
+                    ui_test_target,
+                    "--scenario-file-name",
+                    scenario_file_name,
+                    "--simulator-name",
+                    simulator_name,
+                    "--simulator-runtime",
+                    simulator_runtime,
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            generated_scripts = [
+                repo_root / "scripts" / "run-ai-ui-scenario.sh",
+                repo_root / "scripts" / "local-ai-ui-check.sh",
+                repo_root / "scripts" / "plan-ai-ui-scenario.sh",
+            ]
+            for script_path in generated_scripts:
+                subprocess.run(
+                    ["bash", "-n", str(script_path)],
+                    cwd=repo_root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+            workflow_path = repo_root / ".github" / "workflows" / "ai-ui-check.yml"
+            ruby = shutil.which("ruby")
+            if ruby is None:
+                self.fail("Ruby is required to parse generated workflow YAML in this test")
+            yaml_result = subprocess.run(
+                [
+                    ruby,
+                    "-e",
+                    "require 'yaml'; require 'json'; puts JSON.generate(YAML.load_file(ARGV.fetch(0)))",
+                    str(workflow_path),
+                ],
+                cwd=repo_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(yaml_result.returncode, 0, yaml_result.stderr)
+            workflow_payload = json.loads(yaml_result.stdout)
+            prewarm_step = next(
+                step
+                for step in workflow_payload["jobs"]["ai-ui-check"]["steps"]
+                if step.get("name") == "Prewarm simulator and build for testing"
+            )
+            self.assertEqual(
+                prewarm_step["env"]["AI_UI_PROJECT_PATH"],
+                "${{ " + scaffold_app_repo.github_expression_string(project_name) + " }}",
+            )
+            self.assertEqual(
+                prewarm_step["env"]["AI_UI_SCHEME"],
+                "${{ " + scaffold_app_repo.github_expression_string(scheme_name) + " }}",
+            )
+
+            local_help = subprocess.run(
+                [str(repo_root / "scripts" / "local-ai-ui-check.sh"), "--help"],
+                cwd=repo_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(local_help.returncode, 0, local_help.stderr)
+            self.assertIn(simulator_name, local_help.stdout)
+
+            run_script_text = generated_scripts[0].read_text(encoding="utf-8")
+            run_prefix = run_script_text.split("\nabsolute_path() {", maxsplit=1)[0]
+            run_probe = repo_root / "scripts" / "run-defaults-probe.sh"
+            run_probe.write_text(
+                run_prefix
+                + "\nprintf '%s\\0' \"$PROJECT_PATH\" \"$SCHEME\" \"$UI_TEST_TARGET\" \"$SCENARIO_PATH\"\n",
+                encoding="utf-8",
+            )
+            run_defaults = subprocess.run(
+                ["bash", str(run_probe)],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            ).stdout.split(b"\0")[:-1]
+            self.assertEqual(
+                [value.decode() for value in run_defaults],
+                [
+                    str(repo_root / project_name),
+                    scheme_name,
+                    ui_test_target,
+                    str(repo_root / ".github" / "ai-ui" / scenario_file_name),
+                ],
+            )
+
+            plan_script_text = generated_scripts[2].read_text(encoding="utf-8")
+            plan_prefix = plan_script_text.split("\nmkdir -p", maxsplit=1)[0]
+            plan_probe = repo_root / "scripts" / "plan-defaults-probe.sh"
+            plan_probe.write_text(
+                plan_prefix + "\nprintf '%s\\0' \"$SCENARIO_EXAMPLE_PATH\"\n",
+                encoding="utf-8",
+            )
+            plan_env = os.environ.copy()
+            plan_env.update(
+                {
+                    "AI_UI_SCENARIO_OUTPUT_PATH": str(root / "output.json"),
+                    "OPENAI_API_KEY": "test-key",
+                }
+            )
+            plan_default = subprocess.run(
+                ["bash", str(plan_probe)],
+                cwd=repo_root,
+                env=plan_env,
+                check=True,
+                capture_output=True,
+            ).stdout.rstrip(b"\0").decode()
+            self.assertEqual(
+                plan_default,
+                str(repo_root / ".github" / "ai-ui" / scenario_file_name),
+            )
+
+            python_body = plan_script_text.split("<<'PY'\n", maxsplit=1)[1].rsplit(
+                "\nPY\n", maxsplit=1
+            )[0]
+            compile(python_body, "generated-plan-ai-ui-scenario.py", "exec")
+            module = ast.parse(python_body)
+            app_scheme_assignments = [
+                node
+                for node in module.body
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "app_scheme" for target in node.targets)
+            ]
+            self.assertEqual(len(app_scheme_assignments), 1)
+            self.assertEqual(ast.literal_eval(app_scheme_assignments[0].value), scheme_name)
+
+            workflow_text = workflow_path.read_text(encoding="utf-8")
+            project_line = next(
+                line.strip() for line in workflow_text.splitlines() if line.strip().startswith("-project ")
+            )
+            scheme_line = next(
+                line.strip() for line in workflow_text.splitlines() if line.strip().startswith("-scheme ")
+            )
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_xcodebuild = fake_bin / "xcodebuild"
+            fake_xcodebuild.write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$FAKE_XCODEBUILD_ARGS\"\n",
+                encoding="utf-8",
+            )
+            fake_xcodebuild.chmod(0o755)
+            xcodebuild_args_path = root / "xcodebuild-args"
+            workflow_probe = repo_root / "workflow-build-probe.sh"
+            workflow_probe.write_text(
+                "xcodebuild build-for-testing \\\n"
+                + project_line
+                + "\n"
+                + scheme_line.removesuffix("\\").rstrip()
+                + "\n",
+                encoding="utf-8",
+            )
+            workflow_env = os.environ.copy()
+            workflow_env.update(
+                {
+                    "PATH": f"{fake_bin}{os.pathsep}{workflow_env['PATH']}",
+                    "FAKE_XCODEBUILD_ARGS": str(xcodebuild_args_path),
+                    "AI_UI_PROJECT_PATH": project_name,
+                    "AI_UI_SCHEME": scheme_name,
+                }
+            )
+            subprocess.run(
+                ["bash", str(workflow_probe)],
+                cwd=repo_root,
+                env=workflow_env,
+                check=True,
+                capture_output=True,
+            )
+            xcodebuild_args = [
+                value.decode()
+                for value in xcodebuild_args_path.read_bytes().split(b"\0")
+                if value
+            ]
+            self.assertEqual(
+                xcodebuild_args,
+                ["build-for-testing", "-project", project_name, "-scheme", scheme_name],
+            )
+
+            for marker_name in (
+                "project-injected",
+                "scheme-injected",
+                "ui-injected",
+                "simulator-injected",
+                "runtime-injected",
+                "scenario-injected",
+                "edge",
+            ):
+                self.assertFalse((repo_root / marker_name).exists(), marker_name)
+
+    def test_generated_planner_supports_static_context_and_normalizes_strict_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo_root = root / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project",
+                    "FixtureApp.xcodeproj",
+                    "--scheme",
+                    "FixtureApp",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            def planner_step(action: str, **overrides: object) -> dict[str, object]:
+                step: dict[str, object] = {
+                    "action": action,
+                    "id": None,
+                    "label": None,
+                    "text": None,
+                    "output": None,
+                    "seconds": None,
+                    "wait_seconds": None,
+                    "timeout": None,
+                    "arguments": None,
+                    "environment": None,
+                }
+                step.update(overrides)
+                return step
+
+            strict_scenario = {
+                "name": "Static planner fallback",
+                "description": None,
+                "steps": [
+                    planner_step(
+                        "launch",
+                        arguments=[],
+                        environment=[{"key": "UITESTING", "value": "1"}],
+                        wait_seconds=1,
+                    ),
+                    planner_step("screenshot", output="static.png"),
+                ],
+            }
+            fake_response = {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(strict_scenario),
+                            }
+                        ],
+                    }
+                ]
+            }
+            response_path = root / "fake-openai-response.json"
+            response_path.write_text(json.dumps(fake_response), encoding="utf-8")
+
+            python_hook_dir = root / "python-hook"
+            python_hook_dir.mkdir()
+            (python_hook_dir / "sitecustomize.py").write_text(
+                """import os
+import urllib.request
+from pathlib import Path
+
+class FakeResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def read(self):
+        return Path(os.environ["FAKE_OPENAI_RESPONSE_PATH"]).read_bytes()
+
+urllib.request.urlopen = lambda request: FakeResponse()
+""",
+                encoding="utf-8",
+            )
+
+            scenario_output_path = root / "scenario-output.json"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "OPENAI_API_KEY": "test-key",
+                    "AI_UI_SCENARIO_OUTPUT_PATH": str(scenario_output_path),
+                    "FAKE_OPENAI_RESPONSE_PATH": str(response_path),
+                    "PYTHONPATH": str(python_hook_dir),
+                }
+            )
+            subprocess.run(
+                [str(repo_root / "scripts" / "plan-ai-ui-scenario.sh")],
+                cwd=repo_root,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            normalized = json.loads(scenario_output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                normalized["steps"][0]["environment"],
+                {"UITESTING": "1"},
+            )
+            self.assertNotIn("id", normalized["steps"][0])
+            self.assertFalse((repo_root / "planner-note.md").exists())
+
+    def test_generated_runner_validates_scenario_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo_root = root / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project",
+                    "FixtureApp.xcodeproj",
+                    "--scheme",
+                    "FixtureApp",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            build_marker = root / "xcodebuild-invoked"
+            fake_xcodebuild = fake_bin / "xcodebuild"
+            fake_xcodebuild.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+touch "$FAKE_XCODEBUILD_MARKER"
+""",
+                encoding="utf-8",
+            )
+            fake_xcodebuild.chmod(0o755)
+
+            invalid_steps = [
+                (
+                    {"action": "screenshot", "unexpected": True},
+                    "unsupported fields",
+                ),
+                (
+                    {"action": "wait", "seconds": -1},
+                    "cannot be negative",
+                ),
+            ]
+            for index, (step, expected_message) in enumerate(invalid_steps):
+                with self.subTest(step=step):
+                    scenario_path = root / f"invalid-scenario-{index}.json"
+                    scenario_path.write_text(
+                        json.dumps({"name": "Invalid scenario", "steps": [step]}),
+                        encoding="utf-8",
+                    )
+                    env = os.environ.copy()
+                    env.update(
+                        {
+                            "AI_UI_ARTIFACTS_DIR": str(root / f"artifacts-{index}"),
+                            "AI_UI_DERIVED_DATA_PATH": str(root / "DerivedData"),
+                            "AI_UI_SIMULATOR_UDID": "FAKE-SIMULATOR-UDID",
+                            "FAKE_XCODEBUILD_MARKER": str(build_marker),
+                            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+                        }
+                    )
+
+                    completed = subprocess.run(
+                        [
+                            str(repo_root / "scripts" / "run-ai-ui-scenario.sh"),
+                            str(scenario_path),
+                        ],
+                        cwd=repo_root,
+                        env=env,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn(expected_message, completed.stderr)
+                    self.assertIn("Scenario failed canonical validation", completed.stderr)
+                    self.assertFalse(build_marker.exists())
+
+    def test_local_helper_forces_one_fresh_build_then_reuses_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo_root = root / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project",
+                    "FixtureApp.xcodeproj",
+                    "--scheme",
+                    "FixtureApp",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_xcodebuild = fake_bin / "xcodebuild"
+            fake_xcodebuild.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_XCODEBUILD_LOG"
+if [[ "${1:-}" == "build-for-testing" ]]; then
+  mkdir -p "$AI_UI_DERIVED_DATA_PATH/Build/Products"
+  if [[ "${FAKE_NOOP_BUILD:-0}" != "1" ]]; then
+    cp "$FAKE_FRESH_XCTESTRUN_SOURCE" "$AI_UI_DERIVED_DATA_PATH/Build/Products/fresh.xctestrun"
+  fi
+fi
+if [[ "$*" == *"testInspectUI"* ]]; then
+  mkdir -p "$(dirname "$AI_UI_BEFORE_PLANNING_UI_TREE_PATH")"
+  touch "$AI_UI_BEFORE_PLANNING_UI_TREE_PATH"
+  mkdir -p "$(dirname "$AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH")"
+  touch "$AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH"
+fi
+""",
+                encoding="utf-8",
+            )
+            fake_xcodebuild.chmod(0o755)
+
+            planner_path = repo_root / "scripts" / "plan-ai-ui-scenario.sh"
+            planner_path.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' '{"name":"Planned scenario","steps":[{"action":"launch","arguments":[],"environment":{},"wait_seconds":0},{"action":"screenshot","output":"final.png"}]}' > "$AI_UI_SCENARIO_OUTPUT_PATH"
+""",
+                encoding="utf-8",
+            )
+            planner_path.chmod(0o755)
+
+            derived_data_path = root / "DerivedData"
+            products_path = derived_data_path / "Build" / "Products"
+            products_path.mkdir(parents=True)
+            stale_xctestrun_path = products_path / "stale.xctestrun"
+            with stale_xctestrun_path.open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "StaleMarker": True,
+                        "TestConfigurations": [
+                            {
+                                "TestTargets": [
+                                    {"BlueprintName": "FixtureAppUITests"}
+                                ]
+                            }
+                        ]
+                    },
+                    handle,
+                )
+            future_timestamp = time.time() + 3600
+            os.utime(stale_xctestrun_path, (future_timestamp, future_timestamp))
+
+            fresh_xctestrun_source = root / "fresh-source.xctestrun"
+            with fresh_xctestrun_source.open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "FreshMarker": True,
+                        "TestConfigurations": [
+                            {
+                                "TestTargets": [
+                                    {"BlueprintName": "FixtureAppUITests"}
+                                ]
+                            }
+                        ],
+                    },
+                    handle,
+                )
+
+            artifacts_dir = root / "artifacts"
+            xcodebuild_log = root / "xcodebuild-calls.txt"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "OPENAI_API_KEY": "test-key",
+                    "FAKE_XCODEBUILD_LOG": str(xcodebuild_log),
+                    "FAKE_FRESH_XCTESTRUN_SOURCE": str(fresh_xctestrun_source),
+                    "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+                }
+            )
+            subprocess.run(
+                [
+                    str(repo_root / "scripts" / "local-ai-ui-check.sh"),
+                    "--goal",
+                    "Verify the primary flow",
+                    "--artifacts-dir",
+                    str(artifacts_dir),
+                    "--derived-data-path",
+                    str(derived_data_path),
+                    "--simulator-id",
+                    "FAKE-SIMULATOR-UDID",
+                ],
+                cwd=repo_root,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            calls = xcodebuild_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                sum(call.startswith("build-for-testing ") for call in calls),
+                1,
+            )
+            self.assertEqual(
+                sum(call.startswith("test-without-building ") for call in calls),
+                2,
+            )
+            self.assertTrue((artifacts_dir / "build-for-testing-complete").exists())
+            runtime_xctestrun_path = products_path / "FixtureAppUITests-runtime.xctestrun"
+            with runtime_xctestrun_path.open("rb") as handle:
+                runtime_payload = plistlib.load(handle)
+            self.assertTrue(runtime_payload["FreshMarker"])
+            self.assertNotIn("StaleMarker", runtime_payload)
+
+            stale_xctestrun_path.unlink()
+            second_artifacts_dir = root / "artifacts-second"
+            no_op_env = {**env, "FAKE_NOOP_BUILD": "1"}
+            second_run = subprocess.run(
+                [
+                    str(repo_root / "scripts" / "local-ai-ui-check.sh"),
+                    "--goal",
+                    "Verify the primary flow again",
+                    "--artifacts-dir",
+                    str(second_artifacts_dir),
+                    "--derived-data-path",
+                    str(derived_data_path),
+                    "--simulator-id",
+                    "FAKE-SIMULATOR-UDID",
+                ],
+                cwd=repo_root,
+                env=no_op_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(second_run.returncode, 0, second_run.stderr)
+            self.assertIn(
+                "Build left the sole compatible .xctestrun unchanged; reusing it.",
+                second_run.stderr,
+            )
+            calls = xcodebuild_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                sum(call.startswith("build-for-testing ") for call in calls),
+                2,
+            )
+            self.assertEqual(
+                sum(call.startswith("test-without-building ") for call in calls),
+                4,
+            )
+            self.assertTrue(
+                (second_artifacts_dir / "build-for-testing-complete").exists()
+            )
+
+    def test_generated_swift_runner_contains_screenshot_outputs(self) -> None:
+        template = (REPO_ROOT / "templates" / "ScenarioRunnerUITests.swift.tpl").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("containedArtifactURL", template)
+        self.assertIn("resolvingSymlinksInPath", template)
+        self.assertIn("outputURL.path.hasPrefix(artifactsPrefix)", template)
 
 
 if __name__ == "__main__":

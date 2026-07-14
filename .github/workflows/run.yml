@@ -58,8 +58,13 @@ on:
         required: false
         type: boolean
         default: true
+      comment-author-login:
+        description: GitHub login that owns the managed PR comment when a custom github-token is used.
+        required: false
+        type: string
+        default: github-actions[bot]
       max-duration-seconds:
-        description: Runner execution timeout.
+        description: Per-phase timeout applied independently to inspection, planner, and runner commands.
         required: false
         type: string
         default: "300"
@@ -152,41 +157,66 @@ jobs:
       planner-summary-path: ${{ steps.run_action.outputs.planner-summary-path }}
       artifact-manifest-path: ${{ steps.run_action.outputs.artifact-manifest-path }}
     steps:
-      - name: Resolve action repository and ref
-        id: self
-        shell: bash
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          echo "repository=${WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
-          echo "ref=${WORKFLOW_REF#*@}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout caller repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          path: repo
+          fetch-depth: 0
 
       - name: Checkout action repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          repository: ${{ steps.self.outputs.repository }}
-          ref: ${{ steps.self.outputs.ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: _action
 
       - name: Export planner API key for planner command
-        if: ${{ secrets['planner-api-key'] != '' }}
         shell: bash
         env:
           PLANNER_API_KEY: ${{ secrets['planner-api-key'] }}
           PLANNER_API_KEY_ENV_NAME: ${{ inputs.planner-api-key-env-name }}
         run: |
+          if [[ -z "${PLANNER_API_KEY}" ]]; then
+            exit 0
+          fi
+
           if [[ -z "${PLANNER_API_KEY_ENV_NAME}" ]]; then
             echo "planner-api-key-env-name must not be empty when planner-api-key is provided" >&2
             exit 1
           fi
 
-          echo "::add-mask::${PLANNER_API_KEY}"
-          printf '%s=%s\n' "${PLANNER_API_KEY_ENV_NAME}" "${PLANNER_API_KEY}" >> "$GITHUB_ENV"
+          if [[ ! "${PLANNER_API_KEY_ENV_NAME}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "planner-api-key-env-name must be a valid environment variable name" >&2
+            exit 1
+          fi
+
+          case "${PLANNER_API_KEY_ENV_NAME}" in
+            GITHUB_*|RUNNER_*|NODE_OPTIONS)
+              echo "planner-api-key-env-name must not target a GitHub-reserved environment variable" >&2
+              exit 1
+              ;;
+          esac
+
+          python3 - <<'PY'
+          import os
+          import secrets
+
+          name = os.environ["PLANNER_API_KEY_ENV_NAME"]
+          value = os.environ["PLANNER_API_KEY"]
+          escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::add-mask::{escaped}")
+
+          delimiter = f"IOS_AI_UI_CHECK_{secrets.token_hex(16)}"
+          value_lines = value.splitlines()
+          while delimiter in value_lines:
+              delimiter = f"IOS_AI_UI_CHECK_{secrets.token_hex(16)}"
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"{name}<<{delimiter}\n")
+              handle.write(value)
+              if not value.endswith("\n"):
+                  handle.write("\n")
+              handle.write(f"{delimiter}\n")
+          PY
 
       - name: Run AI UI validation
         id: run_action
@@ -194,14 +224,14 @@ jobs:
         with:
           simulator-name: ${{ inputs.simulator-name }}
           simulator-runtime: ${{ inputs.simulator-runtime }}
-          provided-scenario-path: ${{ inputs.provided-scenario-path != '' && format('repo/{0}', inputs.provided-scenario-path) || '' }}
+          provided-scenario-path: ${{ inputs.provided-scenario-path }}
           planner-command: ${{ inputs.planner-command }}
           planner-goal: ${{ inputs.planner-goal }}
-          expected-screenshot-path: ${{ inputs.expected-screenshot-path != '' && format('repo/{0}', inputs.expected-screenshot-path) || '' }}
+          expected-screenshot-path: ${{ inputs.expected-screenshot-path }}
           artifacts-dir: ${{ inputs.artifacts-dir }}
           upload-artifacts: ${{ inputs.upload-artifacts }}
           record-video: ${{ inputs.record-video }}
           comment-on-pr: ${{ inputs.comment-on-pr }}
+          comment-author-login: ${{ inputs.comment-author-login }}
           max-duration-seconds: ${{ inputs.max-duration-seconds }}
-        env:
-          GITHUB_TOKEN: ${{ secrets['github-token'] || github.token }}
+          github-token: ${{ secrets['github-token'] || github.token }}

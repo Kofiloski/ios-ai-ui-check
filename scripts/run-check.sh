@@ -42,6 +42,8 @@ STATUS="passed"
 RUNNER_EXIT=0
 FAILURE_NOTE=""
 VIDEO_PATH=""
+VIDEO_NOTE=""
+VIDEO_RECORDING_STARTED="false"
 
 simulator_summary() {
   if [[ -n "${AI_UI_SIMULATOR_DEVICE_NAME:-}" && -n "${AI_UI_SIMULATOR_RUNTIME_NAME:-}" ]]; then
@@ -263,6 +265,18 @@ append_failure_screenshot_to_summary() {
   printf '\n- Failure screenshot: %s\n' "$(basename "${FAILURE_SCREENSHOT_PATH}")" >> "${SUMMARY_PATH}"
 }
 
+append_video_note_to_summary() {
+  if [[ -z "${VIDEO_NOTE}" || ! -f "${SUMMARY_PATH}" ]]; then
+    return 0
+  fi
+
+  if grep -q "^- Video note:" "${SUMMARY_PATH}"; then
+    return 0
+  fi
+
+  printf '\n- Video note: %s\n' "${VIDEO_NOTE}" >> "${SUMMARY_PATH}"
+}
+
 remove_transient_video_sidecars() {
   if [[ -z "${VIDEO_RECORDING_PATH}" ]]; then
     return 0
@@ -276,21 +290,79 @@ remove_transient_video_sidecars() {
   shopt -u nullglob
 }
 
+ensure_failed_summary_is_consistent() {
+  if [[ "${STATUS}" != "failed" || ! -f "${SUMMARY_PATH}" ]]; then
+    return 0
+  fi
+
+  SUMMARY_PATH="${SUMMARY_PATH}" \
+  RUNNER_EXIT="${RUNNER_EXIT}" \
+  FAILURE_NOTE="${FAILURE_NOTE}" \
+  python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+summary_path = Path(os.environ["SUMMARY_PATH"])
+runner_exit = os.environ.get("RUNNER_EXIT", "")
+failure_note = os.environ.get("FAILURE_NOTE", "").strip()
+summary_text = summary_path.read_text(encoding="utf-8")
+lines = summary_text.splitlines()
+found_outcome = False
+
+for index, line in enumerate(lines):
+    match = re.match(
+        r"^(\s*(?:(?:[-*]\s*)|(?:#{1,6}\s*))?(?:Status|Result):)\s*.*$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        lines[index] = f"{match.group(1)} failed"
+        found_outcome = True
+
+if not found_outcome:
+    outcome_lines = ["## Action Outcome", "", "- Status: failed"]
+    if lines:
+        outcome_lines.append("")
+    lines = outcome_lines + lines
+
+runner_exit_line = f"- Runner exit code: {runner_exit}" if runner_exit else ""
+if runner_exit_line and runner_exit_line not in lines:
+    lines.append(runner_exit_line)
+
+failure_note_line = f"- Notes: {failure_note}" if failure_note else ""
+if failure_note_line and failure_note_line not in lines:
+    lines.append(failure_note_line)
+
+summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
 cleanup() {
-  if [[ "${RECORD_VIDEO}" == "true" ]]; then
-    "${ACTION_ROOT}/scripts/record-video.sh" stop "${VIDEO_PID_PATH}" || true
-    if [[ -f "${VIDEO_RECORDING_PATH}" ]]; then
-      VIDEO_PATH="${VIDEO_RECORDING_PATH}"
+  if [[ "${VIDEO_RECORDING_STARTED}" == "true" ]]; then
+    if "${ACTION_ROOT}/scripts/record-video.sh" stop "${VIDEO_PID_PATH}"; then
+      if [[ -f "${VIDEO_RECORDING_PATH}" && -s "${VIDEO_RECORDING_PATH}" ]]; then
+        VIDEO_PATH="${VIDEO_RECORDING_PATH}"
+      else
+        VIDEO_NOTE="Video recording did not produce a non-empty finalized file; the video output was omitted."
+        rm -f "${VIDEO_RECORDING_PATH}" || true
+      fi
+    else
+      VIDEO_NOTE="Video recording did not finalize successfully; the video output was omitted."
+      rm -f "${VIDEO_RECORDING_PATH}" || true
     fi
-    remove_transient_video_sidecars
+    remove_transient_video_sidecars || true
   fi
 
   if [[ ! -f "${SUMMARY_PATH}" ]]; then
     write_default_summary
   fi
 
+  ensure_failed_summary_is_consistent
+
   extract_failure_screenshot_from_xcresult
   append_failure_screenshot_to_summary
+  append_video_note_to_summary
   append_planner_goal_to_summary
   append_planner_note_to_summary
 
@@ -303,6 +375,14 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+if [[ ! "${MAX_DURATION_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "max-duration-seconds must be a positive integer: ${MAX_DURATION_SECONDS}" >&2
+  RUNNER_EXIT=2
+  STATUS="failed"
+  FAILURE_NOTE="max-duration-seconds must be a positive integer."
+  exit 0
+fi
 
 if [[ ! -f "${RUNNER_SCRIPT}" ]]; then
   echo "Runner script not found: ${RUNNER_SCRIPT}" >&2
@@ -355,36 +435,30 @@ export AI_UI_MAX_DURATION_SECONDS="${MAX_DURATION_SECONDS}"
 export AI_UI_PLANNER_GOAL="${PLANNER_GOAL}"
 
 if [[ "${RECORD_VIDEO}" == "true" ]]; then
-  "${ACTION_ROOT}/scripts/record-video.sh" start "${VIDEO_PID_PATH}" "${AI_UI_SIMULATOR_UDID}" "${VIDEO_RECORDING_PATH}"
+  if "${ACTION_ROOT}/scripts/record-video.sh" start "${VIDEO_PID_PATH}" "${AI_UI_SIMULATOR_UDID}" "${VIDEO_RECORDING_PATH}"; then
+    VIDEO_RECORDING_STARTED="true"
+  else
+    VIDEO_NOTE="Video recording failed to start; the UI check continued without video."
+    rm -f "${VIDEO_PID_PATH}" "${VIDEO_RECORDING_PATH}" || true
+    remove_transient_video_sidecars || true
+  fi
 fi
 
 set +e
-python3 - "${MAX_DURATION_SECONDS}" "${RUNNER_SCRIPT}" <<'PY'
-import os
-import subprocess
-import sys
-
-timeout = int(sys.argv[1])
-script = sys.argv[2]
-
-try:
-    completed = subprocess.run(
-        ["/bin/bash", script],
-        env=os.environ.copy(),
-        timeout=timeout,
-        check=False,
-    )
-    sys.exit(completed.returncode)
-except subprocess.TimeoutExpired:
-    sys.stderr.write(f"Runner timed out after {timeout} seconds\n")
-    sys.exit(124)
-PY
+python3 "${ACTION_ROOT}/scripts/run-with-timeout.py" \
+  --timeout "${MAX_DURATION_SECONDS}" \
+  --label "Runner" \
+  -- /bin/bash "${RUNNER_SCRIPT}"
 RUNNER_EXIT="$?"
 set -e
 
 if [[ "${RUNNER_EXIT}" -ne 0 ]]; then
   STATUS="failed"
-  FAILURE_NOTE="Runner failed before producing its own summary."
+  if [[ "${RUNNER_EXIT}" -eq 124 ]]; then
+    FAILURE_NOTE="Runner timed out after ${MAX_DURATION_SECONDS} seconds."
+  else
+    FAILURE_NOTE="Runner exited with code ${RUNNER_EXIT}."
+  fi
 fi
 
 exit 0

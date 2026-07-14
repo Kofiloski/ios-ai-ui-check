@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import math
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 
@@ -40,17 +43,54 @@ EXCLUDED_PATH_PARTS = {
     "xcuserdata",
 }
 
-ACCESSIBILITY_IDENTIFIER_PATTERNS = (
-    re.compile(r"\.accessibilityIdentifier\(\s*\"([^\"]+)\"\s*\)"),
-    re.compile(r"\baccessibilityIdentifier\s*=\s*@?\"([^\"]+)\""),
-)
-ACCESSIBILITY_LABEL_PATTERNS = (
-    re.compile(r"\.accessibilityLabel\(\s*\"([^\"]+)\"\s*\)"),
-    re.compile(r"\baccessibilityLabel\s*=\s*@?\"([^\"]+)\""),
-)
-ENV_KEY_PATTERN = re.compile(r'"([A-Z][A-Z0-9_]{3,})"')
-LAUNCH_ARGUMENT_PATTERN = re.compile(r'"(-{1,2}[A-Za-z][A-Za-z0-9_-]*)"')
+ENV_KEY_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{3,}")
+LAUNCH_ARGUMENT_PATTERN = re.compile(r"-{1,2}[A-Za-z][A-Za-z0-9_-]*")
 UI_TREE_IDENTIFIER_PATTERN = re.compile(r"identifier:\s*'([^']+)'")
+
+NON_EMPTY_STRING_SCHEMA: dict[str, Any] = {"type": "string", "minLength": 1, "pattern": r"\S"}
+TIMEOUT_SCHEMA: dict[str, Any] = {"type": "number", "exclusiveMinimum": 0}
+NONNEGATIVE_DURATION_SCHEMA: dict[str, Any] = {"type": "number", "minimum": 0}
+SCREENSHOT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "minLength": 1,
+    "pattern": r"\S",
+    "not": {
+        "anyOf": [
+            {"pattern": r"^(?:/|[A-Za-z]:[\\/]|\\\\)"},
+            {"pattern": r"(?:^|[\\/])\.\.(?:[\\/]|$)"},
+            {"pattern": r"^\.(?:[\\/]+\.)*[\\/]*$"},
+        ]
+    },
+}
+
+
+def _runtime_step_schema(
+    action: str,
+    properties: dict[str, Any],
+    *,
+    required: tuple[str, ...] = (),
+    target_required: bool = False,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", *required],
+        "properties": {
+            "action": {"const": action},
+            **properties,
+        },
+    }
+    if target_required:
+        schema["anyOf"] = [{"required": ["id"]}, {"required": ["label"]}]
+    return schema
+
+
+TARGET_PROPERTIES: dict[str, Any] = {
+    "id": NON_EMPTY_STRING_SCHEMA,
+    "label": NON_EMPTY_STRING_SCHEMA,
+    "timeout": TIMEOUT_SCHEMA,
+}
+
 
 SCENARIO_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -58,9 +98,95 @@ SCENARIO_SCHEMA: dict[str, Any] = {
     "title": "iOS AI UI Check Scenario",
     "type": "object",
     "additionalProperties": False,
-    "required": ["steps"],
+    "required": ["name", "steps"],
     "properties": {
-        "name": {"type": "string"},
+        "name": NON_EMPTY_STRING_SCHEMA,
+        "description": {"type": ["string", "null"]},
+        "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "oneOf": [
+                    _runtime_step_schema(
+                        "launch",
+                        {
+                            "arguments": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "environment": {
+                                "type": "object",
+                                "propertyNames": NON_EMPTY_STRING_SCHEMA,
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "wait_seconds": NONNEGATIVE_DURATION_SCHEMA,
+                        },
+                    ),
+                    _runtime_step_schema(
+                        "tap",
+                        TARGET_PROPERTIES,
+                        target_required=True,
+                    ),
+                    _runtime_step_schema(
+                        "type",
+                        {**TARGET_PROPERTIES, "text": NON_EMPTY_STRING_SCHEMA},
+                        required=("text",),
+                    ),
+                    _runtime_step_schema(
+                        "wait",
+                        {"seconds": NONNEGATIVE_DURATION_SCHEMA},
+                        required=("seconds",),
+                    ),
+                    _runtime_step_schema(
+                        "assertVisible",
+                        TARGET_PROPERTIES,
+                        target_required=True,
+                    ),
+                    _runtime_step_schema(
+                        "assertText",
+                        {**TARGET_PROPERTIES, "text": NON_EMPTY_STRING_SCHEMA},
+                        required=("text",),
+                    ),
+                    _runtime_step_schema(
+                        "screenshot",
+                        {"output": SCREENSHOT_OUTPUT_SCHEMA},
+                    ),
+                ]
+            },
+        },
+    },
+}
+
+
+_STRICT_OPTIONAL_STRING_SCHEMA: dict[str, Any] = {
+    "type": ["string", "null"],
+    "minLength": 1,
+    "pattern": r"\S",
+}
+_STRICT_OPTIONAL_SCREENSHOT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": ["string", "null"],
+    "minLength": 1,
+    "pattern": r"\S",
+}
+_STRICT_OPTIONAL_DURATION_SCHEMA: dict[str, Any] = {
+    "type": ["number", "null"],
+    "minimum": 0,
+}
+_STRICT_OPTIONAL_TIMEOUT_SCHEMA: dict[str, Any] = {
+    "type": ["number", "null"],
+    "exclusiveMinimum": 0,
+}
+
+
+# OpenAI strict structured outputs require every object property to be required
+# and every object to set additionalProperties to false. This wire schema is
+# deliberately separate from the provider-neutral runtime scenario schema.
+OPENAI_PLANNER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "description", "steps"],
+    "properties": {
+        "name": NON_EMPTY_STRING_SCHEMA,
         "description": {"type": ["string", "null"]},
         "steps": {
             "type": "array",
@@ -68,23 +194,42 @@ SCENARIO_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["action"],
+                "required": [
+                    "action",
+                    "id",
+                    "label",
+                    "text",
+                    "output",
+                    "seconds",
+                    "wait_seconds",
+                    "timeout",
+                    "arguments",
+                    "environment",
+                ],
                 "properties": {
                     "action": {"type": "string", "enum": list(SUPPORTED_ACTIONS)},
-                    "id": {"type": "string"},
-                    "label": {"type": "string"},
-                    "text": {"type": "string"},
-                    "output": {"type": "string"},
-                    "seconds": {"type": "number"},
-                    "wait_seconds": {"type": "number"},
-                    "timeout": {"type": "number"},
+                    "id": _STRICT_OPTIONAL_STRING_SCHEMA,
+                    "label": _STRICT_OPTIONAL_STRING_SCHEMA,
+                    "text": _STRICT_OPTIONAL_STRING_SCHEMA,
+                    "output": _STRICT_OPTIONAL_SCREENSHOT_OUTPUT_SCHEMA,
+                    "seconds": _STRICT_OPTIONAL_DURATION_SCHEMA,
+                    "wait_seconds": _STRICT_OPTIONAL_DURATION_SCHEMA,
+                    "timeout": _STRICT_OPTIONAL_TIMEOUT_SCHEMA,
                     "arguments": {
-                        "type": "array",
+                        "type": ["array", "null"],
                         "items": {"type": "string"},
                     },
                     "environment": {
-                        "type": "object",
-                        "additionalProperties": {"type": "string"},
+                        "type": ["array", "null"],
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["key", "value"],
+                            "properties": {
+                                "key": NON_EMPTY_STRING_SCHEMA,
+                                "value": {"type": "string"},
+                            },
+                        },
                     },
                 },
             },
@@ -136,20 +281,360 @@ def iter_source_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
+@dataclass(frozen=True)
+class SourceString:
+    start: int
+    content_start: int
+    content_end: int
+    end: int
+    interpolation_spans: tuple[tuple[int, int], ...]
+
+
+def _string_delimiter_at(source: str, index: int) -> tuple[int, int, int] | None:
+    cursor = index
+    while cursor < len(source) and source[cursor] == "#":
+        cursor += 1
+    if cursor >= len(source) or source[cursor] != '"':
+        return None
+    quote_count = 3 if source.startswith('"""', cursor) else 1
+    return cursor - index, quote_count, cursor
+
+
+def _skip_block_comment(source: str, index: int) -> int:
+    depth = 1
+    cursor = index + 2
+    while cursor < len(source) and depth:
+        if source.startswith("/*", cursor):
+            depth += 1
+            cursor += 2
+        elif source.startswith("*/", cursor):
+            depth -= 1
+            cursor += 2
+        else:
+            cursor += 1
+    return cursor
+
+
+def _extended_regex_hash_count_at(source: str, index: int) -> int | None:
+    cursor = index
+    while cursor < len(source) and source[cursor] == "#":
+        cursor += 1
+    hash_count = cursor - index
+    if hash_count == 0 or cursor >= len(source) or source[cursor] != "/":
+        return None
+    return hash_count
+
+
+def _scan_extended_regex(source: str, start: int) -> int:
+    hash_count = _extended_regex_hash_count_at(source, start)
+    if hash_count is None:
+        return start + 1
+    cursor = start + hash_count + 1
+    close_delimiter = "/" + ("#" * hash_count)
+    interpolation_delimiter = "\\" + ("#" * hash_count) + "("
+
+    while cursor < len(source):
+        if source.startswith(close_delimiter, cursor):
+            return cursor + len(close_delimiter)
+        if source.startswith(interpolation_delimiter, cursor):
+            cursor = _skip_interpolation(source, cursor + len(interpolation_delimiter))
+            continue
+        if source[cursor] == "\\":
+            cursor += min(2, len(source) - cursor)
+            continue
+        cursor += 1
+    return len(source)
+
+
+_STANDARD_REGEX_PREFIX_KEYWORDS = {
+    "await",
+    "case",
+    "else",
+    "guard",
+    "if",
+    "in",
+    "return",
+    "switch",
+    "throw",
+    "try",
+    "where",
+    "while",
+    "yield",
+}
+
+
+def _standard_regex_can_start_at(
+    source: str,
+    index: int,
+    *,
+    mask: list[str] | None = None,
+) -> bool:
+    """Recognize expression-position bare-slash regex delimiters.
+
+    Swift's parser disambiguates ``/.../`` from division contextually. Source
+    discovery only needs the conservative expression-start cases used by regex
+    literals; treating a slash after a value as division prevents an operator
+    from masking later accessibility strings.
+    """
+
+    if index >= len(source) or source[index] != "/":
+        return False
+    if index + 1 >= len(source) or source[index + 1] in {"/", "*", "=", "\n", "\r"}:
+        return False
+
+    code = mask if mask is not None else source
+    cursor = index - 1
+    while cursor >= 0 and code[cursor].isspace():
+        cursor -= 1
+    if cursor < 0:
+        return True
+
+    if code[cursor] in "=([{,:;!?&|^~<>+-*%":
+        return True
+
+    if code[cursor].isalnum() or code[cursor] == "_":
+        end = cursor + 1
+        while cursor >= 0 and (code[cursor].isalnum() or code[cursor] == "_"):
+            cursor -= 1
+        return "".join(code[cursor + 1 : end]) in _STANDARD_REGEX_PREFIX_KEYWORDS
+
+    return False
+
+
+def _scan_standard_regex(source: str, start: int) -> int | None:
+    cursor = start + 1
+    in_character_class = False
+
+    while cursor < len(source):
+        character = source[cursor]
+        if character in {"\n", "\r"}:
+            return None
+        if character == "\\":
+            if source.startswith("\\(", cursor):
+                cursor = _skip_interpolation(source, cursor + 2)
+            else:
+                cursor = min(len(source), cursor + 2)
+            continue
+        if character == "[":
+            in_character_class = True
+            cursor += 1
+            continue
+        if character == "]" and in_character_class:
+            in_character_class = False
+            cursor += 1
+            continue
+        if character == "/" and not in_character_class:
+            return cursor + 1
+        cursor += 1
+
+    return None
+
+
+def _scan_string(source: str, start: int) -> SourceString:
+    delimiter = _string_delimiter_at(source, start)
+    if delimiter is None:
+        raise ValueError(f"expected string delimiter at offset {start}")
+    hash_count, quote_count, quote_start = delimiter
+    content_start = quote_start + quote_count
+    close_delimiter = ('"' * quote_count) + ("#" * hash_count)
+    interpolation_delimiter = "\\" + ("#" * hash_count) + "("
+    escape_delimiter = "\\" + ("#" * hash_count)
+    interpolation_spans: list[tuple[int, int]] = []
+    cursor = content_start
+
+    while cursor < len(source):
+        if source.startswith(close_delimiter, cursor):
+            return SourceString(
+                start=start,
+                content_start=content_start,
+                content_end=cursor,
+                end=cursor + len(close_delimiter),
+                interpolation_spans=tuple(interpolation_spans),
+            )
+        if source.startswith(interpolation_delimiter, cursor):
+            expression_start = cursor + len(interpolation_delimiter)
+            interpolation_end = _skip_interpolation(source, expression_start)
+            interpolation_spans.append((expression_start, interpolation_end))
+            cursor = interpolation_end
+            continue
+        if source.startswith(escape_delimiter, cursor):
+            escaped_start = cursor + len(escape_delimiter)
+            if escaped_start < len(source):
+                escaped_length = (
+                    quote_count
+                    if source.startswith('"' * quote_count, escaped_start)
+                    else 1
+                )
+                cursor = min(len(source), escaped_start + escaped_length)
+                continue
+        if source[cursor] == "\\":
+            cursor += 1
+            continue
+        cursor += 1
+
+    return SourceString(
+        start=start,
+        content_start=content_start,
+        content_end=len(source),
+        end=len(source),
+        interpolation_spans=tuple(interpolation_spans),
+    )
+
+
+def _skip_interpolation(source: str, index: int) -> int:
+    depth = 1
+    cursor = index
+    while cursor < len(source) and depth:
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = _skip_block_comment(source, cursor)
+            continue
+        if _string_delimiter_at(source, cursor) is not None:
+            cursor = _scan_string(source, cursor).end
+            continue
+        if _extended_regex_hash_count_at(source, cursor) is not None:
+            cursor = _scan_extended_regex(source, cursor)
+            continue
+        if _standard_regex_can_start_at(source, cursor):
+            regex_end = _scan_standard_regex(source, cursor)
+            if regex_end is not None:
+                cursor = regex_end
+                continue
+        if source[cursor] == "(":
+            depth += 1
+        elif source[cursor] == ")":
+            depth -= 1
+        cursor += 1
+    return cursor
+
+
+def _mask_range(mask: list[str], source: str, start: int, end: int) -> None:
+    for index in range(start, end):
+        if source[index] != "\n":
+            mask[index] = " "
+
+
+def _lex_source(source: str) -> tuple[str, list[SourceString]]:
+    """Return a code-only mask plus literal string tokens with stable offsets."""
+
+    mask = list(source)
+    strings: list[SourceString] = []
+    cursor = 0
+    while cursor < len(source):
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            end = len(source) if newline < 0 else newline
+            _mask_range(mask, source, cursor, end)
+            cursor = end
+            continue
+        if source.startswith("/*", cursor):
+            end = _skip_block_comment(source, cursor)
+            _mask_range(mask, source, cursor, end)
+            cursor = end
+            continue
+        if _string_delimiter_at(source, cursor) is not None:
+            token = _scan_string(source, cursor)
+            strings.append(token)
+            _mask_range(mask, source, token.start, token.end)
+            cursor = token.end
+            continue
+        if _extended_regex_hash_count_at(source, cursor) is not None:
+            end = _scan_extended_regex(source, cursor)
+            _mask_range(mask, source, cursor, end)
+            cursor = end
+            continue
+        if _standard_regex_can_start_at(source, cursor, mask=mask):
+            end = _scan_standard_regex(source, cursor)
+            if end is not None:
+                _mask_range(mask, source, cursor, end)
+                cursor = end
+                continue
+        cursor += 1
+    return "".join(mask), strings
+
+
+def _accessibility_literal_values_by_property(
+    source: str,
+    property_names: tuple[str, ...],
+) -> dict[str, set[str]]:
+    """Collect accessibility literals in one linear lexical pass."""
+
+    code_mask, strings = _lex_source(source)
+    patterns = {
+        property_name: (
+            re.compile(rf"\.{property_name}\(\s*$"),
+            re.compile(rf"\b{property_name}\s*=\s*@?\s*$"),
+            re.compile(
+                rf"\bset{property_name[0].upper() + property_name[1:]}\s*:\s*@?\s*$"
+            ),
+        )
+        for property_name in property_names
+    }
+    values = {property_name: set() for property_name in property_names}
+    swift_suffix = re.compile(r"\s*\)")
+    setter_suffix = re.compile(r"\s*\]")
+    previous_token_end = 0
+
+    for token_index, token in enumerate(strings):
+        next_token_start = (
+            strings[token_index + 1].start
+            if token_index + 1 < len(strings)
+            else len(code_mask)
+        )
+        if token.interpolation_spans:
+            previous_token_end = token.end
+            continue
+        prefix = code_mask[previous_token_end : token.start]
+        line_end = code_mask.find("\n", token.end, next_token_start)
+        if line_end < 0:
+            line_end = next_token_start
+        assignment_tail = code_mask[token.end : line_end].strip()
+        value = source[token.content_start : token.content_end]
+
+        for property_name, (swift_prefix, assignment_prefix, setter_prefix) in patterns.items():
+            is_literal_assignment = False
+            if swift_prefix.search(prefix):
+                is_literal_assignment = (
+                    swift_suffix.match(code_mask, token.end, next_token_start) is not None
+                )
+            elif assignment_prefix.search(prefix):
+                is_literal_assignment = assignment_tail in {"", ";"}
+            elif setter_prefix.search(prefix):
+                is_literal_assignment = (
+                    setter_suffix.match(code_mask, token.end, next_token_start) is not None
+                )
+
+            if is_literal_assignment and value:
+                values[property_name].add(value)
+
+        previous_token_end = token.end
+
+    return values
+
+
+def _accessibility_literal_values(source: str, property_name: str) -> set[str]:
+    return _accessibility_literal_values_by_property(source, (property_name,))[property_name]
+
+
+def _read_source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="ignore")
+
+
 def collect_accessibility_ids(repo_root: Path) -> set[str]:
     identifiers: set[str] = set()
 
     for path in iter_source_files(repo_root):
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-
-        for pattern in ACCESSIBILITY_IDENTIFIER_PATTERNS:
-            for identifier in pattern.findall(content):
-                if r"\(" in identifier:
-                    continue
-                identifiers.add(identifier)
+        values = _accessibility_literal_values_by_property(
+            _read_source(path),
+            ("accessibilityIdentifier",),
+        )
+        identifiers.update(values["accessibilityIdentifier"])
 
     return identifiers
 
@@ -159,19 +644,13 @@ def collect_accessibility_strings(repo_root: Path) -> tuple[list[str], list[str]
     labels: set[str] = set()
 
     for path in iter_source_files(repo_root):
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-
-        for pattern in ACCESSIBILITY_IDENTIFIER_PATTERNS:
-            for identifier in pattern.findall(content):
-                if r"\(" in identifier:
-                    continue
-                identifiers.add(identifier)
-
-        for pattern in ACCESSIBILITY_LABEL_PATTERNS:
-            labels.update(pattern.findall(content))
+        content = _read_source(path)
+        values = _accessibility_literal_values_by_property(
+            content,
+            ("accessibilityIdentifier", "accessibilityLabel"),
+        )
+        identifiers.update(values["accessibilityIdentifier"])
+        labels.update(values["accessibilityLabel"])
 
     return sorted(identifiers), sorted(labels)
 
@@ -181,20 +660,25 @@ def collect_launch_hints(repo_root: Path) -> tuple[list[str], list[str]]:
     launch_arguments: set[str] = set()
 
     for path in iter_source_files(repo_root):
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-
+        content = _read_source(path)
+        _, strings = _lex_source(content)
+        string_values = [
+            content[token.content_start : token.content_end]
+            for token in strings
+            if not token.interpolation_spans
+        ]
         environment_keys.update(
             key
-            for key in ENV_KEY_PATTERN.findall(content)
+            for key in string_values
+            if ENV_KEY_PATTERN.fullmatch(key)
             if "AUTOMATION" in key
             or "UITEST" in key
             or "UI_TEST" in key
             or key.endswith("_TESTING")
         )
-        launch_arguments.update(LAUNCH_ARGUMENT_PATTERN.findall(content))
+        launch_arguments.update(
+            value for value in string_values if LAUNCH_ARGUMENT_PATTERN.fullmatch(value)
+        )
 
     return sorted(environment_keys), sorted(launch_arguments)
 
@@ -288,6 +772,50 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_finite_number(value: Any) -> bool:
+    if not _is_number(value):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _is_nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _validate_screenshot_output(output: str, *, step_index: int) -> None:
+    posix_path = PurePosixPath(output)
+    windows_path = PureWindowsPath(output)
+    if posix_path.is_absolute() or windows_path.is_absolute():
+        raise ScenarioContractError(
+            f"Scenario step {step_index} screenshot output must be a relative path inside the artifacts directory"
+        )
+
+    if posix_path == PurePosixPath(".") or windows_path == PureWindowsPath("."):
+        raise ScenarioContractError(
+            f"Scenario step {step_index} screenshot output must name a file inside the artifacts directory"
+        )
+
+    parts = (*posix_path.parts, *windows_path.parts)
+    if ".." in parts:
+        raise ScenarioContractError(
+            f"Scenario step {step_index} screenshot output cannot contain parent-directory traversal"
+        )
+
+
+ACTION_STEP_FIELDS: dict[str, set[str]] = {
+    "launch": {"action", "arguments", "environment", "wait_seconds"},
+    "tap": {"action", "id", "label", "timeout"},
+    "type": {"action", "id", "label", "text", "timeout"},
+    "wait": {"action", "seconds"},
+    "assertVisible": {"action", "id", "label", "timeout"},
+    "assertText": {"action", "id", "label", "text", "timeout"},
+    "screenshot": {"action", "output"},
+}
+
+
 def validate_scenario_payload(payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ScenarioContractError("Scenario payload must be a JSON object")
@@ -300,8 +828,8 @@ def validate_scenario_payload(payload: dict[str, Any]) -> None:
         )
 
     name = payload.get("name")
-    if name is not None and not isinstance(name, str):
-        raise ScenarioContractError("Scenario payload 'name' must be a string when provided")
+    if not _is_nonempty_string(name):
+        raise ScenarioContractError("Scenario payload must contain a non-empty string 'name'")
 
     description = payload.get("description")
     if description is not None and not isinstance(description, str):
@@ -313,28 +841,9 @@ def validate_scenario_payload(payload: dict[str, Any]) -> None:
     if not steps:
         raise ScenarioContractError("Scenario payload 'steps' array cannot be empty")
 
-    allowed_step_fields = {
-        "action",
-        "id",
-        "label",
-        "text",
-        "output",
-        "seconds",
-        "wait_seconds",
-        "timeout",
-        "arguments",
-        "environment",
-    }
-
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             raise ScenarioContractError(f"Scenario step {index} must be an object")
-
-        extra_step_fields = sorted(set(step.keys()) - allowed_step_fields)
-        if extra_step_fields:
-            raise ScenarioContractError(
-                f"Scenario step {index} contains unsupported fields: {', '.join(extra_step_fields)}"
-            )
 
         action = step.get("action")
         if not isinstance(action, str) or not action.strip():
@@ -347,29 +856,69 @@ def validate_scenario_payload(payload: dict[str, Any]) -> None:
                 f"Allowed actions: {', '.join(SUPPORTED_ACTIONS)}"
             )
 
+        extra_step_fields = sorted(set(step.keys()) - ACTION_STEP_FIELDS[action])
+        if extra_step_fields:
+            raise ScenarioContractError(
+                f"Scenario step {index} action '{action}' contains unsupported fields: "
+                f"{', '.join(extra_step_fields)}"
+            )
+
         for key in ("id", "label", "text", "output"):
-            value = step.get(key)
-            if value is not None and not isinstance(value, str):
+            if key not in step:
+                continue
+            value = step[key]
+            if not isinstance(value, str):
                 raise ScenarioContractError(
                     f"Scenario step {index} field '{key}' must be a string when provided"
                 )
-
-        for key in ("seconds", "wait_seconds", "timeout"):
-            value = step.get(key)
-            if value is not None and not _is_number(value):
+            if not value.strip():
                 raise ScenarioContractError(
-                    f"Scenario step {index} field '{key}' must be numeric when provided"
+                    f"Scenario step {index} field '{key}' must be non-empty when provided"
                 )
 
-        arguments = step.get("arguments")
-        if arguments is not None:
+        for key in ("seconds", "wait_seconds", "timeout"):
+            if key not in step:
+                continue
+            value = step[key]
+            if not _is_finite_number(value):
+                raise ScenarioContractError(
+                    f"Scenario step {index} field '{key}' must be a finite number when provided"
+                )
+            if key == "timeout" and value <= 0:
+                raise ScenarioContractError(
+                    f"Scenario step {index} field 'timeout' must be greater than zero"
+                )
+            if key != "timeout" and value < 0:
+                raise ScenarioContractError(
+                    f"Scenario step {index} field '{key}' cannot be negative"
+                )
+
+        if action in {"tap", "assertVisible"} and not (
+            _is_nonempty_string(step.get("id")) or _is_nonempty_string(step.get("label"))
+        ):
+            raise ScenarioContractError(
+                f"Scenario step {index} action '{action}' requires a non-empty 'id' or 'label'"
+            )
+
+        if action in {"type", "assertText"} and not _is_nonempty_string(step.get("text")):
+            raise ScenarioContractError(
+                f"Scenario step {index} action '{action}' requires non-empty 'text'"
+            )
+
+        if action == "wait" and "seconds" not in step:
+            raise ScenarioContractError(
+                f"Scenario step {index} action 'wait' requires nonnegative 'seconds'"
+            )
+
+        if "arguments" in step:
+            arguments = step["arguments"]
             if not isinstance(arguments, list) or not all(isinstance(item, str) for item in arguments):
                 raise ScenarioContractError(
                     f"Scenario step {index} field 'arguments' must be an array of strings when provided"
                 )
 
-        environment = step.get("environment")
-        if environment is not None:
+        if "environment" in step:
+            environment = step["environment"]
             if not isinstance(environment, dict):
                 raise ScenarioContractError(
                     f"Scenario step {index} field 'environment' must be an object when provided"
@@ -379,6 +928,82 @@ def validate_scenario_payload(payload: dict[str, Any]) -> None:
                     raise ScenarioContractError(
                         f"Scenario step {index} field 'environment' must contain only string keys and values"
                     )
+                if not env_key.strip():
+                    raise ScenarioContractError(
+                        f"Scenario step {index} field 'environment' cannot contain an empty key"
+                    )
+
+        output = step.get("output")
+        if action == "screenshot" and isinstance(output, str):
+            _validate_screenshot_output(output, step_index=index)
+
+
+def normalize_openai_planner_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert the strict OpenAI wire shape into the provider-neutral runtime shape."""
+
+    if not isinstance(payload, dict):
+        raise ScenarioContractError("Planner payload must be a JSON object")
+
+    normalized: dict[str, Any] = {
+        "name": payload.get("name"),
+        "steps": [],
+    }
+    if payload.get("description") is not None:
+        normalized["description"] = payload.get("description")
+
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        raise ScenarioContractError("Planner payload must contain a 'steps' array")
+
+    optional_step_fields = (
+        "id",
+        "label",
+        "text",
+        "output",
+        "seconds",
+        "wait_seconds",
+        "timeout",
+        "arguments",
+    )
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise ScenarioContractError(f"Planner step {index} must be an object")
+
+        normalized_step: dict[str, Any] = {"action": step.get("action")}
+        for key in optional_step_fields:
+            if step.get(key) is not None:
+                normalized_step[key] = step[key]
+
+        environment_pairs = step.get("environment")
+        if environment_pairs is not None:
+            if not isinstance(environment_pairs, list):
+                raise ScenarioContractError(
+                    f"Planner step {index} field 'environment' must be an array of key/value objects or null"
+                )
+
+            environment: dict[str, str] = {}
+            for pair_index, pair in enumerate(environment_pairs):
+                if not isinstance(pair, dict) or set(pair) != {"key", "value"}:
+                    raise ScenarioContractError(
+                        f"Planner step {index} environment entry {pair_index} must contain exactly 'key' and 'value'"
+                    )
+                key = pair.get("key")
+                value = pair.get("value")
+                if not _is_nonempty_string(key) or not isinstance(value, str):
+                    raise ScenarioContractError(
+                        f"Planner step {index} environment entry {pair_index} must contain a non-empty string key and string value"
+                    )
+                if key in environment:
+                    raise ScenarioContractError(
+                        f"Planner step {index} environment contains duplicate key '{key}'"
+                    )
+                environment[key] = value
+            normalized_step["environment"] = environment
+
+        normalized["steps"].append(normalized_step)
+
+    validate_scenario_payload(normalized)
+    return normalized
 
 
 def load_and_validate_scenario(path: Path) -> dict[str, Any]:

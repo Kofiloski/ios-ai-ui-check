@@ -42,8 +42,16 @@ inputs:
     description: Post a PR comment on pull_request events.
     required: false
     default: "true"
+  github-token:
+    description: Token used to create or update the managed pull request comment.
+    required: false
+    default: ""
+  comment-author-login:
+    description: GitHub login that owns the managed PR comment; set this when github-token posts as a custom user or bot.
+    required: false
+    default: ""
   max-duration-seconds:
-    description: Runner execution timeout.
+    description: Per-phase timeout applied independently to inspection, planner, and runner commands.
     required: false
     default: "300"
 
@@ -195,6 +203,8 @@ runs:
       if: ${{ always() && inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' }}
       shell: bash
       env:
+        GITHUB_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN || github.token }}
+        AI_UI_COMMENT_AUTHOR_LOGIN: ${{ inputs.comment-author-login || env.AI_UI_COMMENT_AUTHOR_LOGIN || 'github-actions[bot]' }}
         STATUS: ${{ steps.run_check.outputs.status || steps.plan.outputs.status }}
         SUMMARY_PATH: ${{ steps.run_check.outputs.summary-path || steps.plan.outputs.summary-path }}
         ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}

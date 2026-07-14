@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import html
 from io import BytesIO
 import json
 import plistlib
@@ -59,14 +60,7 @@ def main() -> int:
     template_dir = action_repo_root / "templates"
     source_repo = resolve_github_repo_slug(action_repo_root)
     source_commit = resolve_git_commit(action_repo_root)
-    refresh_command = build_refresh_command(
-        script_path=action_repo_root / "scripts" / "scaffold-app-repo.py",
-        repo_root=repo_root,
-        project_relative_path=project_relative_path,
-        args=args,
-        app_target_name=app_target_name,
-        ui_test_target_name=ui_test_target_name,
-    )
+    refresh_command = build_refresh_command()
     managed_files = [
         f"Tests/{ui_test_target_name}/ScenarioRunnerUITests.swift",
         "scripts/run-ai-ui-scenario.sh",
@@ -90,7 +84,6 @@ def main() -> int:
     )
     scaffold_manifest = build_scaffold_manifest(
         repo_root=repo_root,
-        action_repo_root=action_repo_root,
         project_relative_path=project_relative_path,
         scheme_name=scheme_name,
         app_target_name=app_target_name,
@@ -349,12 +342,6 @@ def ensure_ui_test_target(
         }
         insert_before_group(objects, main_group_id, tests_group_id, "Products")
 
-    scenario_runner_file_ref_id = ensure_file_reference(
-        objects=objects,
-        group_id=tests_group_id,
-        path="ScenarioRunnerUITests.swift",
-        last_known_file_type="sourcecode.swift",
-    )
     product_file_ref_id = ensure_product_file_reference(
         objects=objects,
         products_group_id=products_group_id,
@@ -440,6 +427,13 @@ def ensure_ui_test_target(
             }
             target_payload.setdefault("buildPhases", []).append(frameworks_phase_id)
 
+    scenario_runner_file_ref_id = ensure_file_reference(
+        objects=objects,
+        group_id=tests_group_id,
+        path="ScenarioRunnerUITests.swift",
+        last_known_file_type="sourcecode.swift",
+        migrate_build_phase_ids=(sources_phase_id,),
+    )
     ensure_build_file_in_phase(
         objects=objects,
         phase_id=sources_phase_id,
@@ -518,12 +512,40 @@ def create_ui_test_configurations(
     return config_list_id
 
 
-def ensure_file_reference(*, objects: dict, group_id: str, path: str, last_known_file_type: str) -> str:
-    for object_id, payload in objects.items():
+def ensure_file_reference(
+    *,
+    objects: dict,
+    group_id: str,
+    path: str,
+    last_known_file_type: str,
+    migrate_build_phase_ids: tuple[str, ...] = (),
+) -> str:
+    group = objects[group_id]
+    for object_id in group.get("children", []):
+        payload = objects.get(object_id, {})
         if payload.get("isa") != "PBXFileReference":
             continue
         if payload.get("path") == path and payload.get("lastKnownFileType") == last_known_file_type:
-            ensure_group_child(objects, group_id, object_id)
+            containing_group_ids = [
+                candidate_group_id
+                for candidate_group_id, candidate_group in objects.items()
+                if candidate_group.get("isa") == "PBXGroup"
+                and object_id in candidate_group.get("children", [])
+            ]
+            if any(candidate_group_id != group_id for candidate_group_id in containing_group_ids):
+                cloned_file_ref_id = make_id(objects)
+                objects[cloned_file_ref_id] = dict(payload)
+                group["children"] = [
+                    cloned_file_ref_id if child_id == object_id else child_id
+                    for child_id in group.get("children", [])
+                ]
+                migrate_build_file_references(
+                    objects=objects,
+                    phase_ids=migrate_build_phase_ids,
+                    old_file_ref_id=object_id,
+                    new_file_ref_id=cloned_file_ref_id,
+                )
+                return cloned_file_ref_id
             return object_id
 
     file_ref_id = make_id(objects)
@@ -535,6 +557,39 @@ def ensure_file_reference(*, objects: dict, group_id: str, path: str, last_known
     }
     ensure_group_child(objects, group_id, file_ref_id)
     return file_ref_id
+
+
+def migrate_build_file_references(
+    *,
+    objects: dict,
+    phase_ids: tuple[str, ...],
+    old_file_ref_id: str,
+    new_file_ref_id: str,
+) -> None:
+    for phase_id in phase_ids:
+        phase = objects.get(phase_id, {})
+        matching_build_file_ids = []
+        for build_file_id in phase.get("files", []):
+            build_file = objects.get(build_file_id, {})
+            if build_file.get("isa") != "PBXBuildFile":
+                continue
+            if build_file.get("fileRef") in {old_file_ref_id, new_file_ref_id}:
+                matching_build_file_ids.append(build_file_id)
+
+        if not matching_build_file_ids:
+            continue
+
+        retained_build_file_id = matching_build_file_ids[0]
+        objects[retained_build_file_id]["fileRef"] = new_file_ref_id
+        duplicate_ids = set(matching_build_file_ids[1:])
+        if duplicate_ids:
+            phase["files"] = [
+                build_file_id
+                for build_file_id in phase.get("files", [])
+                if build_file_id not in duplicate_ids
+            ]
+            for duplicate_id in duplicate_ids:
+                objects.pop(duplicate_id, None)
 
 
 def ensure_product_file_reference(*, objects: dict, products_group_id: str, path: str) -> str:
@@ -716,11 +771,62 @@ def scheme_has_buildable(parent: ET.Element, blueprint_id: str) -> bool:
     return False
 
 
+TEMPLATE_PLACEHOLDER_PATTERN = re.compile(r"__([A-Z][A-Z0-9_]*)__")
+
+
 def render_template(template_path: Path, values: dict[str, str]) -> str:
     content = template_path.read_text(encoding="utf-8")
-    for key, value in values.items():
-        content = content.replace(f"__{key}__", value)
-    return content
+
+    def replacement(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in values:
+            raise ValueError(f"Missing template value for {key} in {template_path}")
+        return values[key]
+
+    return TEMPLATE_PLACEHOLDER_PATTERN.sub(replacement, content)
+
+
+def shell_word(value: str) -> str:
+    return shlex.quote(value)
+
+
+def yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def github_expression_string(value: str) -> str:
+    json_string = json.dumps(value, ensure_ascii=True)
+    expression_literal = "'" + json_string.replace("'", "''") + "'"
+    return f"fromJSON({expression_literal})"
+
+
+def workflow_dispatch_input_expression(input_name: str, fallback_value: str) -> str:
+    expression = (
+        "${{ github.event_name == 'workflow_dispatch' && "
+        f"inputs.{input_name} || {github_expression_string(fallback_value)} }}}}"
+    )
+    return yaml_string(expression)
+
+
+def github_literal_expression_yaml(value: str) -> str:
+    return yaml_string("${{ " + github_expression_string(value) + " }}")
+
+
+def python_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def markdown_code(value: str) -> str:
+    if "\n" in value or "\r" in value:
+        return f"<code>{html.escape(value)}</code>"
+
+    longest_backtick_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", value)),
+        default=0,
+    )
+    fence = "`" * max(1, longest_backtick_run + 1)
+    padding = " " if value.startswith(("`", " ")) or value.endswith(("`", " ")) else ""
+    return f"{fence}{padding}{value}{padding}{fence}"
 
 
 def write_file(path: Path, content: str, *, executable: bool = False) -> None:
@@ -827,46 +933,11 @@ def resolve_github_repo_slug(repo_root: Path) -> str:
     return match.group("slug")
 
 
-def build_refresh_command(
-    *,
-    script_path: Path,
-    repo_root: Path,
-    project_relative_path: str,
-    args: argparse.Namespace,
-    app_target_name: str,
-    ui_test_target_name: str,
-) -> str:
-    parts = [
-        "python3",
-        str(script_path),
-        "--repo-root",
-        str(repo_root),
-        "--project",
-        project_relative_path,
-        "--scheme",
-        args.scheme,
-    ]
-
-    if args.app_target is not None:
-        parts.extend(["--app-target", app_target_name])
-    if args.ui_test_target is not None:
-        parts.extend(["--ui-test-target", ui_test_target_name])
-    if args.scenario_file_name != DEFAULT_SCENARIO_FILE_NAME:
-        parts.extend(["--scenario-file-name", args.scenario_file_name])
-    if args.scenario_template is not None:
-        parts.extend(["--scenario-template", str(args.scenario_template.resolve())])
-    if args.planner_context_template is not None:
-        parts.extend(
-            ["--planner-context-template", str(args.planner_context_template.resolve())]
-        )
-    if args.simulator_name != DEFAULT_SIMULATOR_NAME:
-        parts.extend(["--simulator-name", args.simulator_name])
-    if args.simulator_runtime != DEFAULT_SIMULATOR_RUNTIME:
-        parts.extend(["--simulator-runtime", args.simulator_runtime])
-    if args.skip_workflow:
-        parts.append("--skip-workflow")
-
-    return " ".join(shlex.quote(part) for part in parts)
+def build_refresh_command() -> str:
+    return (
+        'python3 "${IOS_AI_UI_CHECK_ROOT:?Set IOS_AI_UI_CHECK_ROOT to the '
+        'ios-ai-ui-check checkout}/scripts/refresh-scaffold.py" --repo-root .'
+    )
 
 
 def build_scaffold_headers(*, manifest_relative_path: str, source_commit: str) -> dict[str, str]:
@@ -888,7 +959,6 @@ def build_scaffold_headers(*, manifest_relative_path: str, source_commit: str) -
 def build_scaffold_manifest(
     *,
     repo_root: Path,
-    action_repo_root: Path,
     project_relative_path: str,
     scheme_name: str,
     app_target_name: str,
@@ -911,10 +981,9 @@ def build_scaffold_manifest(
         "manifest_version": 2,
         "tool": "ios-ai-ui-check",
         "source_repo": source_repo,
-        "source_repo_path": str(action_repo_root),
         "source_commit": source_commit,
         "generated_at_utc": generated_at,
-        "repo_root": str(repo_root),
+        "repo_root": ".",
         "project_path": project_relative_path,
         "scheme": scheme_name,
         "app_target": app_target_name,
@@ -924,11 +993,24 @@ def build_scaffold_manifest(
         "scaffold_manifest_path": scaffold_manifest_relative_path.as_posix(),
         "simulator_name": simulator_name,
         "simulator_runtime": simulator_runtime,
-        "scenario_template": str(args.scenario_template.resolve()) if args.scenario_template else None,
+        "scenario_template": manifest_template_reference(
+            repo_root,
+            args.scenario_template,
+            external_fallback=scenario_relative_path.as_posix(),
+        ),
+        "scenario_template_mode": manifest_template_mode(
+            repo_root,
+            args.scenario_template,
+        ),
         "planner_context_template": (
-            str(args.planner_context_template.resolve())
-            if args.planner_context_template
-            else None
+            manifest_template_reference(
+                repo_root,
+                args.planner_context_template,
+                external_fallback=".github/ai-ui/planner-context.md",
+            )
+        ),
+        "planner_context_template_mode": (
+            manifest_template_mode(repo_root, args.planner_context_template)
         ),
         "workflow_generated": not args.skip_workflow,
         "managed_files": managed_files_for_manifest(
@@ -940,7 +1022,35 @@ def build_scaffold_manifest(
         ),
         "refresh_command": refresh_command,
         "generated_files": generated_files,
-    }
+}
+
+
+def manifest_template_reference(
+    repo_root: Path,
+    template_path: Path | None,
+    *,
+    external_fallback: str,
+) -> str | None:
+    if template_path is None:
+        return None
+
+    resolved_path = template_path.expanduser().resolve()
+    try:
+        return resolved_path.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return external_fallback
+
+
+def manifest_template_mode(repo_root: Path, template_path: Path | None) -> str:
+    if template_path is None:
+        return "none"
+
+    resolved_path = template_path.expanduser().resolve()
+    try:
+        resolved_path.relative_to(repo_root.resolve())
+    except ValueError:
+        return "generated-customizable-file"
+    return "repo-relative"
 
 
 def managed_files_for_manifest(*, ui_test_target_name: str, workflow_generated: bool) -> list[str]:
@@ -981,24 +1091,36 @@ def build_planned_files(
     scaffold_manifest: dict[str, object],
     scaffold_manifest_relative_path: Path,
 ) -> list[PlannedFile]:
-    planner_context_content = (
-        render_template(
+    planner_context_target = repo_root / ".github" / "ai-ui" / "planner-context.md"
+    scenario_target = repo_root / scenario_relative_path
+
+    if args.preserve_customizable_files and planner_context_target.is_file():
+        planner_context_content = planner_context_target.read_text(encoding="utf-8")
+    elif args.planner_context_template is None:
+        planner_context_content = render_template(
             template_dir / "planner-context.md.tpl",
             {
-                "SCHEME": scheme_name,
-                "SCENARIO_PATH": scenario_relative_path.as_posix(),
+                "SCHEME_MARKDOWN": markdown_code(scheme_name),
+                "SCENARIO_PATH_MARKDOWN": markdown_code(scenario_relative_path.as_posix()),
                 "SCAFFOLD_HEADER_MARKDOWN": scaffold_headers["markdown"],
             },
         )
-        if args.planner_context_template is None
-        else scaffold_headers["markdown"] + args.planner_context_template.read_text(encoding="utf-8")
-    )
+    else:
+        planner_context_template = args.planner_context_template.resolve()
+        if planner_context_template == planner_context_target.resolve():
+            planner_context_content = planner_context_template.read_text(encoding="utf-8")
+        else:
+            planner_context_content = (
+                scaffold_headers["markdown"]
+                + planner_context_template.read_text(encoding="utf-8")
+            )
 
-    scenario_payload = (
-        render_template(template_dir / "scenario.json.tpl", {})
-        if args.scenario_template is None
-        else args.scenario_template.read_text(encoding="utf-8")
-    )
+    if args.preserve_customizable_files and scenario_target.is_file():
+        scenario_payload = scenario_target.read_text(encoding="utf-8")
+    elif args.scenario_template is None:
+        scenario_payload = render_template(template_dir / "scenario.json.tpl", {})
+    else:
+        scenario_payload = args.scenario_template.read_text(encoding="utf-8")
 
     planned_files = [
         PlannedFile(
@@ -1015,12 +1137,12 @@ def build_planned_files(
             content=render_template(
                 template_dir / "run-ai-ui-scenario.sh.tpl",
                 {
-                    "PROJECT_PATH": project_relative_path,
-                    "SCHEME": scheme_name,
-                    "SCENARIO_PATH": scenario_relative_path.as_posix(),
-                    "SIMULATOR_NAME": simulator_name,
-                    "SIMULATOR_RUNTIME": simulator_runtime,
-                    "UI_TEST_TARGET": ui_test_target_name,
+                    "PROJECT_PATH_SHELL": shell_word(project_relative_path),
+                    "SCHEME_SHELL": shell_word(scheme_name),
+                    "SCENARIO_PATH_SHELL": shell_word(scenario_relative_path.as_posix()),
+                    "SIMULATOR_NAME_SHELL": shell_word(simulator_name),
+                    "SIMULATOR_RUNTIME_SHELL": shell_word(simulator_runtime),
+                    "UI_TEST_TARGET_SHELL": shell_word(ui_test_target_name),
                     "SCAFFOLD_HEADER_SHELL": scaffold_headers["shell"],
                 },
             ),
@@ -1032,9 +1154,9 @@ def build_planned_files(
             content=render_template(
                 template_dir / "local-ai-ui-check.sh.tpl",
                 {
-                    "SCENARIO_PATH": scenario_relative_path.as_posix(),
-                    "SIMULATOR_NAME": simulator_name,
-                    "SIMULATOR_RUNTIME": simulator_runtime,
+                    "SCENARIO_PATH_SHELL": shell_word(scenario_relative_path.as_posix()),
+                    "SIMULATOR_NAME_SHELL": shell_word(simulator_name),
+                    "SIMULATOR_RUNTIME_SHELL": shell_word(simulator_runtime),
                     "SCAFFOLD_HEADER_SHELL": scaffold_headers["shell"],
                 },
             ),
@@ -1046,8 +1168,8 @@ def build_planned_files(
             content=render_template(
                 template_dir / "plan-ai-ui-scenario.sh.tpl",
                 {
-                    "SCHEME": scheme_name,
-                    "SCENARIO_PATH": scenario_relative_path.as_posix(),
+                    "SCHEME_PYTHON": python_string(scheme_name),
+                    "SCENARIO_PATH_SHELL": shell_word(scenario_relative_path.as_posix()),
                     "SCAFFOLD_HEADER_SHELL": scaffold_headers["shell"],
                 },
             ),
@@ -1060,13 +1182,13 @@ def build_planned_files(
             executable=True,
         ),
         PlannedFile(
-            path=repo_root / ".github" / "ai-ui" / "planner-context.md",
+            path=planner_context_target,
             relative_path=".github/ai-ui/planner-context.md",
             content=planner_context_content,
             customizable=True,
         ),
         PlannedFile(
-            path=repo_root / scenario_relative_path,
+            path=scenario_target,
             relative_path=scenario_relative_path.as_posix(),
             content=scenario_payload,
             customizable=True,
@@ -1086,12 +1208,19 @@ def build_planned_files(
                 content=render_template(
                     template_dir / "workflow.yml.tpl",
                     {
-                        "PROJECT_PATH": project_relative_path,
-                        "SCHEME": scheme_name,
-                        "SCENARIO_PATH": scenario_relative_path.as_posix(),
-                        "SIMULATOR_NAME": simulator_name,
-                        "SIMULATOR_RUNTIME": simulator_runtime,
-                        "ACTION_REPOSITORY": source_repo,
+                        "PROJECT_PATH_EXPRESSION_YAML": github_literal_expression_yaml(
+                            project_relative_path
+                        ),
+                        "SCHEME_EXPRESSION_YAML": github_literal_expression_yaml(scheme_name),
+                        "SIMULATOR_NAME_YAML": yaml_string(simulator_name),
+                        "SIMULATOR_RUNTIME_YAML": yaml_string(simulator_runtime),
+                        "SIMULATOR_NAME_EXPRESSION_YAML": workflow_dispatch_input_expression(
+                            "simulator_name", simulator_name
+                        ),
+                        "SIMULATOR_RUNTIME_EXPRESSION_YAML": workflow_dispatch_input_expression(
+                            "simulator_runtime", simulator_runtime
+                        ),
+                        "ACTION_REPOSITORY_YAML": yaml_string(source_repo),
                         "SCAFFOLD_HEADER_YAML": scaffold_headers["yaml"],
                     },
                 ),
