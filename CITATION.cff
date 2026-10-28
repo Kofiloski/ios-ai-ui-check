@@ -8,8 +8,8 @@ authors:
 repository-code: https://github.com/Kofiloski/ios-ai-ui-check
 url: https://github.com/Kofiloski/ios-ai-ui-check
 license: MIT
-version: 0.3.0
-date-released: 2026-07-14
+version: 0.4.0
+date-released: 2026-10-28
 abstract: >-
   A provider-neutral GitHub Action and deterministic scaffold for running
   app-owned iOS Simulator UI scenarios with reviewable artifacts and managed

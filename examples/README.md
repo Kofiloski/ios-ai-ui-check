@@ -10,7 +10,7 @@ The compact example runs on every pull request. Keep the scaffold-generated labe
 
 Review `.github/ai-ui/verify-primary-flow.json` before relying on the check. The generated starter only launches and captures the initial UI until the app repo adds its own stable interactions and assertions.
 
-The example uses the immutable `v0.3.0` release. A full commit SHA provides the strongest source pin; the moving `v0` tag opts into compatible updates.
+The example uses the immutable `v0.4.0` release. A full commit SHA provides the strongest source pin; the moving `v0` tag opts into compatible updates.
 
 ## AI-Planned Variant
 

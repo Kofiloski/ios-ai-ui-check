@@ -10,6 +10,6 @@ permissions:
 
 jobs:
   ui-check:
-    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.3.0
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.4.0
     with:
       provided-scenario-path: .github/ai-ui/verify-primary-flow.json

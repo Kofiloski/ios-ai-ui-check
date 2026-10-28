@@ -28,3 +28,7 @@ jobs:
       - name: Run maintenance checks
         shell: bash
         run: ./scripts/check-maintenance.sh
+
+      - name: Validate distributable Agent Skill
+        shell: bash
+        run: gh skill publish --dry-run "${GITHUB_WORKSPACE}/skills"

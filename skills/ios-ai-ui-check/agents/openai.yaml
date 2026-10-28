@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS AI UI Check"
+  short_description: "Check Simulator UI with Xcode or CI"
+  default_prompt: "Use $ios-ai-ui-check to verify this app's flow with native Xcode Simulator tools, or add a reproducible check when regression coverage is needed."

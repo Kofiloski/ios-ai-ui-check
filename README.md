@@ -16,12 +16,24 @@ Turn an app-owned `XCUITest` flow into a reviewable pull-request check: run it o
 
 The reusable action owns orchestration and evidence. Your app repo keeps control of launch state, data seeding, accessibility identifiers, UI interactions, and assertions.
 
+## Agent Skill And Native Xcode Checks
+
+The installable [`ios-ai-ui-check` skill](skills/ios-ai-ui-check/SKILL.md) supports focused local verification with Xcode 27 or later's native Simulator tools, as well as reproducible checks through this action:
+
+```bash
+gh skill install Kofiloski/ios-ai-ui-check ios-ai-ui-check@v0.4.0 --agent codex --scope user
+```
+
+For a local check, the agent discovers the exposed Xcode tool schemas, selects the intended project/scheme and Simulator, then builds, launches, interacts, and captures the observed result. External agents need Apple's [MCP bridge setup](https://developer.apple.com/documentation/xcode/giving-external-agents-access-to-xcode). An installed Xcode version alone does not establish that these tools are connected.
+
+Local exploration does not require scaffolding a UI-test target or workflow. Native screenshots and touch actions provide local observations; repeatable CI coverage stays in the app-owned scenario or XCUITest runner. An accessibility-contract fix still requires inspection through the failing automation tool and replay of the original path. Read [docs/native-xcode-checks.md](docs/native-xcode-checks.md) for the routing and evidence boundary.
+
 ## Start With A Deterministic Check
 
 First scaffold the app-owned runner and scenario from a local checkout:
 
 ```bash
-git clone --branch v0.3.0 --depth 1 \
+git clone --branch v0.4.0 --depth 1 \
   https://github.com/Kofiloski/ios-ai-ui-check.git ../ios-ai-ui-check
 
 python3 ../ios-ai-ui-check/scripts/scaffold-app-repo.py \
@@ -47,7 +59,7 @@ permissions:
 
 jobs:
   ui-check:
-    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.3.0
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.4.0
     with:
       provided-scenario-path: .github/ai-ui/verify-primary-flow.json
 ```
@@ -265,12 +277,12 @@ Keep expectations realistic: XCUITest on Simulator is much slower than unit test
 
 ### 2. Use The Action After Your Existing Build/Test Steps
 
-The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.3.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.4.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 The scaffolded workflow supports both `workflow_dispatch` and opt-in `pull_request` runs. On PRs, it runs only when the `ai-ui-check` label is present and the scaffolded planner defaults to a PR-aware goal sentence.
 
 The generated workflow keeps the manual GitHub form fairly narrow. It exposes `planner_goal` plus the technical knobs `simulator_name`, `simulator_runtime`, and `planner_model`. `planner_goal` maps to `AI_UI_PLANNER_GOAL`, so maintainers can ask for goals like `test adding an ingredient` without hand-authoring scenario JSON. When a planner goal is used, the action persists the exact goal text into `summary.md`, and the scaffolded planner can also emit a short `Planner Note` when it intentionally narrows a requested conditional-state path into a safer deterministic route. If the runner attached XCTest's `Failure Screenshot`, the action also extracts it from `.xcresult` into `failure-screenshot.png` before uploading artifacts. On pull requests, the action updates a single managed comment instead of posting a fresh new comment on every run, and it truncates oversized summaries instead of letting GitHub reject the whole update.
 The lower-level action still supports further overrides such as checked-in scenarios and expected screenshots. The scaffolded workflow just does not surface those as `workflow_dispatch` form fields. If you need them, edit the workflow YAML directly or call the action from a custom workflow.
-The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.3.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
+The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.4.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
 
 #### AI-Planned Scenario
 
@@ -280,7 +292,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.3.0
+  uses: Kofiloski/ios-ai-ui-check@v0.4.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
     planner-goal: test adding an ingredient
@@ -298,7 +310,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.3.0
+  uses: Kofiloski/ios-ai-ui-check@v0.4.0
   with:
     provided-scenario-path: .github/ai-ui/detail-screen.json
     simulator-name: iPhone 17 Pro
@@ -436,7 +448,7 @@ Example with OpenAI:
 
 ```yaml
 - name: UI validation
-  uses: Kofiloski/ios-ai-ui-check@v0.3.0
+  uses: Kofiloski/ios-ai-ui-check@v0.4.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
   env:
@@ -513,6 +525,6 @@ docs/
 
 ## Releases And Citation
 
-Use immutable semantic tags such as `v0.3.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
+Use immutable semantic tags such as `v0.4.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
 
 The project is MIT licensed. If you reference it in research, documentation, or a tool catalog, use [`CITATION.cff`](CITATION.cff) for the current citation metadata.

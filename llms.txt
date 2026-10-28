@@ -3,7 +3,7 @@
 > Provider-neutral GitHub Action and deterministic scaffold for running app-owned iOS Simulator UI scenarios, preserving review evidence, and maintaining one pull-request summary.
 
 Canonical repository: https://github.com/Kofiloski/ios-ai-ui-check
-Latest documented release: v0.3.0
+Latest documented release: v0.4.0
 License: MIT
 
 ## Use this project when
@@ -12,12 +12,15 @@ License: MIT
 - a checked-in JSON scenario or app-owned planner should drive a scaffolded XCUITest runner;
 - reviewers need summary.md, manifest.json, video, screenshots, logs, xcresult, and planner diagnostics from one run;
 - multiple app repos should share orchestration without sharing app-specific launch or assertion logic.
+- an agent needs a focused local UI check through Xcode's native Simulator controls, with observations kept separate from automated CI assertions.
 
 Do not put app-specific state seeding, credentials, deep links, accessibility IDs, or assertions in this repository. Those belong in each consuming app repo.
 
 ## Start here
 
 - README.md: value proposition, first integration, evidence, and trust boundary.
+- skills/ios-ai-ui-check/SKILL.md: installable agent workflow for native local checks and reproducible CI adoption.
+- docs/native-xcode-checks.md: native tool discovery and evidence boundaries.
 - docs/adoption-checklist.md: minimum app-repo adoption checklist.
 - docs/architecture.md: public-action versus app-repo ownership.
 - docs/runner-contract.md: environment, scenario, and summary contract for runners.
