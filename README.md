@@ -1,5 +1,6 @@
 # ios-ai-ui-check
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-View_Action-blue?logo=github)](https://github.com/marketplace/actions/ios-ai-ui-check)
 [![CI](https://github.com/Kofiloski/ios-ai-ui-check/actions/workflows/ci.yml/badge.svg)](https://github.com/Kofiloski/ios-ai-ui-check/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kofiloski/ios-ai-ui-check)](https://github.com/Kofiloski/ios-ai-ui-check/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

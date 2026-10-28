@@ -82,3 +82,11 @@ The workflow will:
 6. optionally move the matching major tag
 
 The release is resumable. Rerunning the same version from the same commit continues past an existing exact tag or GitHub release, while an exact tag that points to a different commit remains a hard failure.
+
+## GitHub Marketplace
+
+After an Action release, verify the [public Marketplace listing](https://github.com/marketplace/actions/ios-ai-ui-check) shows the intended version and links to this repository. A successful release workflow alone does not establish that the Marketplace listing is current.
+
+If the intended version is missing, edit that existing GitHub release, select **Publish this Action to the GitHub Marketplace**, confirm the categories, and save with **Update release**. Follow [GitHub's publishing instructions](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace), then check the public listing again.
+
+Documentation-only follow-ups do not require moving an existing release tag or cutting another Action version.
