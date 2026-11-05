@@ -10,6 +10,8 @@ If an action affects unrelated devices or host setup, prepare an app-owned local
 
 Keep Xcode selection command-scoped with `DEVELOPER_DIR`. Confirm the actual test action as well as the scheme name; a Swift package's library scheme may build while its package scheme owns the tests. Match the destination to the imported frameworks: a package's declared macOS support does not prove its current sources compile for the host.
 
+Keep project-file edits reviewable. If a scaffold rewrites an entire native project file into another format, preserve the original format when practical and verify that the parsed project content still matches the intended target changes.
+
 ## Establish the public build prerequisites
 
 Separate optional inspection utilities from dependencies the app actually needs. Use existing installed tools for equivalent setup where possible. A downloader that offers to install a convenience CLI does not make that CLI a toolkit prerequisite. Preserve the upstream version and checksum when preparing a public binary dependency with another downloader.
@@ -23,6 +25,8 @@ Inspect submodules, LFS references, generated assets, and bootstrap scripts for 
 ## Choose a focused verification path
 
 Inspect existing tests, launch arguments, fixtures, and accessibility queries before creating a target. Prefer a meaningful existing flow selected with `-only-testing` when it exercises the requested behavior. Avoid inheriting release, deployment, or notification workflows just to run a local test.
+
+For an app that needs App Groups or keychain access groups at startup, do not assume `CODE_SIGNING_ALLOWED=NO` produces a runnable Simulator build. Inspect the launch failure and generated Simulator entitlements. Where supported, command-scoped ad hoc signing can retain the required entitlements without a developer certificate. Match the application identifier prefix to the app's actual keychain-group configuration and verify the real launch afterward. Do not remove storage assertions or substitute persistence to hide a signing/configuration failure; package unit tests that do not need these capabilities may still run unsigned.
 
 Check disk headroom before dependency resolution and builds. On a constrained host, run apps sequentially and retain logs, source revisions, integration diffs, and `.xcresult` evidence before arranging cleanup of regenerable products. Existing cleanup authorization and the host's cleanup rules still apply; do not remove active runtimes, source edits, or release evidence to make a test fit.
 
