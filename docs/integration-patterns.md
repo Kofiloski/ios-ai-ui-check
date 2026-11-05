@@ -256,3 +256,21 @@ For AI-planned flows, it provides a provider-agnostic secret pass-through using 
 - Use the label-triggered mode when the check is expensive or still maturing.
 - Use the existing PR CI step when the flow is stable and should gate merges.
 - Use the reusable workflow wrapper when you want the job orchestration to live in the action repo instead of the app repo.
+
+## Release comparisons
+
+Supply `base-ref` and `head-ref` together, plus an optional UTF-8 `release-notes-path` in the app checkout. The checked-out source must match `head-ref`, and both refs must already be available locally (use `actions/checkout` with `fetch-depth: 0` or fetch the exact tags). The action never chooses a release or fetches Git history implicitly.
+
+```yaml
+with:
+  base-ref: '2.1.5'
+  head-ref: '2.1.6'
+  release-notes-path: .github/ai-ui/release-notes.md
+  provided-scenario-path: .github/ai-ui/release-pagination.json
+```
+
+Missing refs, an empty explicit diff, a mismatched checkout, and empty/missing supplied release notes fail before planning or Simulator execution. The action saves `change-context.json` and the complete `change.diff`; planner excerpts disclose their 20,000-character limit and truncation. PR comparisons use their actual base/head SHAs and fail if history is missing instead of substituting the last commit. A goal-only local run can still proceed with visibly unavailable parent-commit context.
+
+Explicit release scenarios require a visibility or text assertion. A passing scenario establishes only its declared behavior; the summary leaves other release changes unverified. Put stronger checks, deterministic data fixtures, and a per-change coverage report in the app repo. A screenshot cannot establish pagination uniqueness, request cursors, timer cleanup, or another platform's behavior. An app-owned XCTest can use the scaffolded wrapper through `AI_UI_TEST_SELECTOR=AppUITests/ReleaseTests/testScenario`; inspect mode always retains its own inspector.
+
+The generated planner consumes this context through `AI_UI_CHANGE_CONTEXT_PATH`. For standalone generated-planner calls, set `AI_UI_BASE_REF`, `AI_UI_HEAD_REF`, and optionally `AI_UI_RELEASE_NOTES_PATH`; existing app repos need an explicit scaffold refresh to receive these changes. No live model call is required when a reviewed scenario is supplied.

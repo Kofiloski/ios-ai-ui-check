@@ -18,7 +18,9 @@ Do not put app-specific state seeding, credentials, deep links, accessibility ID
 
 ## Start here
 
-- README.md: value proposition, first integration, evidence, and trust boundary.
+- README.md: concise introduction, quick start, evidence limits, and documentation index.
+- docs/getting-started.md: full scaffold setup, app customization, safe refreshes, and limitations.
+- docs/action-reference.md: complete inputs, outputs, planner environment, and scenario reference.
 - skills/ios-ai-ui-check/SKILL.md: installable agent workflow for native local checks and reproducible CI adoption.
 - [Planner configuration](docs/planner-configuration.md): provider, model, effort, credentials, and source-version availability.
 - docs/native-xcode-checks.md: native tool discovery and evidence boundaries.

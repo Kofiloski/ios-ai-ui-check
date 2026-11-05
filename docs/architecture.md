@@ -56,3 +56,19 @@ The core action does not call a specific model vendor directly. That concern is 
 An action step cannot choose the runner. `runs-on` is a job-level concern in GitHub Actions.
 
 The reusable workflow exists to expose `runner` as an input while still using the same public action internally.
+
+## How The Boundary Works
+
+```mermaid
+flowchart LR
+  Provided["Checked-in scenario"] --> Validate["Canonical validation"]
+  Goal["Planner goal"] --> Inspect["Live UI inspect"]
+  Inspect --> Planner["App-owned planner command"]
+  Planner --> Validate
+  Validate --> Simulator["Boot Simulator + record video"]
+  Simulator --> Runner["App-owned XCUITest runner"]
+  Runner --> Evidence["Summary + manifest + media + logs + xcresult"]
+  Evidence --> Review["Artifact upload + managed PR comment"]
+```
+
+The composite action does not call an AI provider. A checked-in scenario stays fully deterministic. On the optional AI path, the reusable workflow can expose a planner secret, but only the `planner-command` supplied by the app repo consumes it. That command chooses the provider and exactly what context leaves the runner. The generated planner supports Anthropic, OpenAI, and explicitly configured OpenAI-compatible endpoints and can receive the inspected screenshot, UI tree, planner context, and discovered UI identifiers, so review it before adding credentials. Replace it with another provider or a local planner without changing the action contract.

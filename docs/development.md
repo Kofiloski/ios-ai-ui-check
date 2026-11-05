@@ -128,3 +128,25 @@ Current coverage is aimed at the highest-drift surfaces:
 `scripts/ai_ui_planner.py` is copied as a managed scaffold file alongside `ai_ui_contract.py`. Keep provider transport and request/response handling there; prompt/source discovery stays in the generated app planner. Preserve the public executor's custom-command boundary. Read [planner configuration](planner-configuration.md) before changing effort mapping or credential forwarding.
 
 Provider selection is available from `v0.6.0`; consumers upgrading from `v0.5.0` or earlier need both the new action revision and an explicit scaffold refresh. Shared wire-schema/normalizer aliases preserve old OpenAI imports. Adapter tests use fixtures and a loopback HTTP server, and generated-script tests exercise both OpenAI and Anthropic without real API credentials. Live provider access and hosted workflow execution remain separate checks.
+
+## Repository Layout
+
+```text
+action.yml
+.github/workflows/run.yml
+CITATION.cff
+llms.txt
+examples/
+scripts/
+templates/
+schemas/
+docs/
+```
+
+- `action.yml`: composite-action contract plus GitHub Marketplace metadata
+- `examples/`: copyable post-scaffold workflow callers
+- `scripts/`: shell entry points used by the public action plus the deterministic scaffold generator
+- `templates/`: `.tpl` source files rendered by the scaffold generator into an app repo; they are not executed directly
+- `schemas/`: reference JSON schemas for scenario payloads
+- `docs/`: durable architecture and runner contract notes
+- `llms.txt` and `CITATION.cff`: agent-readable discovery and citation metadata

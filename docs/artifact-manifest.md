@@ -76,3 +76,39 @@ The list includes both primary artifacts and additional discovered files or dire
 - The manifest is an index, not a full JSON schema for every nested artifact type.
 - It does not currently hash artifact contents.
 - It records relative paths and metadata, not semantic assertions about the artifact contents.
+
+## Human-readable review evidence
+
+The managed PR comment uses the actual action status, artifact URL, and app-runner summary. Its rendered shape is:
+
+```md
+## iOS AI UI Check
+
+Status: `passed`
+
+Artifact: [ios-ai-ui-check](https://github.com/.../actions/runs/.../artifacts/...)
+
+## iOS AI UI Check
+
+- Scenario: Verify primary flow
+- Result: passed
+- Simulator: iPhone 17 Pro / iOS 26.2 (...)
+- Log: xcodebuild-ui-test.log
+- Result bundle: AppUITests.xcresult
+```
+
+By default, the linked bundle can contain:
+
+```text
+summary.md
+manifest.json
+scenario.json
+run.mp4                         # when recording finalizes successfully
+failure-screenshot.png          # when XCTest provides a failure attachment
+<UITestTarget>.xcresult/
+xcodebuild-ui-test.log
+inspect/                         # before-planning screenshot and UI tree
+planner-*                        # request, response, validation, and summary evidence
+```
+
+`manifest.json` indexes the files that actually exist, so downstream tooling does not need to scrape Markdown or assume every optional artifact was produced. Planner failures still preserve a top-level summary and planner diagnostics before the action reports failure.
