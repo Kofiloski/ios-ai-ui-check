@@ -22,19 +22,25 @@ The reusable action owns orchestration and evidence. Your app repo keeps control
 The installable [`ios-ai-ui-check` skill](skills/ios-ai-ui-check/SKILL.md) supports focused local verification with Xcode 27 or later's native Simulator tools, as well as reproducible checks through this action:
 
 ```bash
-gh skill install Kofiloski/ios-ai-ui-check ios-ai-ui-check@v0.4.0 --agent codex --scope user
+gh skill install Kofiloski/ios-ai-ui-check ios-ai-ui-check@v0.5.0 --agent codex --scope user
 ```
 
 For a local check, the agent discovers the exposed Xcode tool schemas, selects the intended project/scheme and Simulator, then builds, launches, interacts, and captures the observed result. External agents need Apple's [MCP bridge setup](https://developer.apple.com/documentation/xcode/giving-external-agents-access-to-xcode). An installed Xcode version alone does not establish that these tools are connected.
 
 Local exploration does not require scaffolding a UI-test target or workflow. Native screenshots and touch actions provide local observations; repeatable CI coverage stays in the app-owned scenario or XCUITest runner. An accessibility-contract fix still requires inspection through the failing automation tool and replay of the original path. Read [docs/native-xcode-checks.md](docs/native-xcode-checks.md) for the routing and evidence boundary.
 
+For failures that need explanation beyond the visible UI, the skill can correlate a reproduction with bounded app logs, relevant saved state, and focused runtime inspection using existing Simulator tooling. Raw app state stays local and instrumented observations remain separate from normal test results; these diagnostics add no jailbreak dependency or CI artifact requirements.
+
+The generated XCTest runner isolates UI work to the main actor for Swift 6 app targets. Existing integrations need an explicit scaffold refresh to receive template fixes; see [development notes](docs/development.md).
+
+Local verification uses available Xcode/XCTest and Apple command-line tools. AXe, XcodeBuildMCP, and other external inspectors are optional integrations, not dependencies supplied or required by the skill.
+
 ## Start With A Deterministic Check
 
 First scaffold the app-owned runner and scenario from a local checkout:
 
 ```bash
-git clone --branch v0.4.0 --depth 1 \
+git clone --branch v0.5.0 --depth 1 \
   https://github.com/Kofiloski/ios-ai-ui-check.git ../ios-ai-ui-check
 
 python3 ../ios-ai-ui-check/scripts/scaffold-app-repo.py \
@@ -60,7 +66,7 @@ permissions:
 
 jobs:
   ui-check:
-    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.4.0
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.5.0
     with:
       provided-scenario-path: .github/ai-ui/verify-primary-flow.json
 ```
@@ -68,6 +74,24 @@ jobs:
 This path does not call a model or require an API key. When GitHub restricts the default token on a fork or Dependabot pull request, the optional managed comment is skipped without failing the UI check; artifacts and the job summary still carry the evidence. A caller-provided writable `github-token` remains supported. Pin to a commit SHA instead of a release tag if your dependency policy requires immutable source references. A copyable version of the workflow lives in [`examples/deterministic-pr-check.yml`](examples/deterministic-pr-check.yml).
 
 ## Review Evidence, Not Just A Status Dot
+
+### Compare Release Sources
+
+Supply `base-ref` and `head-ref` together, plus an optional UTF-8 `release-notes-path` in the app checkout. The checked-out source must match `head-ref`, and both refs must already be available locally (use `actions/checkout` with `fetch-depth: 0` or fetch the exact tags). The action never chooses a release or fetches Git history implicitly.
+
+```yaml
+with:
+  base-ref: '2.1.5'
+  head-ref: '2.1.6'
+  release-notes-path: .github/ai-ui/release-notes.md
+  provided-scenario-path: .github/ai-ui/release-pagination.json
+```
+
+Missing refs, an empty explicit diff, a mismatched checkout, and empty/missing supplied release notes fail before planning or Simulator execution. The action saves `change-context.json` and the complete `change.diff`; planner excerpts disclose their 20,000-character limit and truncation. PR comparisons use their actual base/head SHAs and fail if history is missing instead of substituting the last commit. A goal-only local run can still proceed with visibly unavailable parent-commit context.
+
+Explicit release scenarios require a visibility or text assertion. A passing scenario establishes only its declared behavior; the summary leaves other release changes unverified. Put stronger checks, deterministic data fixtures, and a per-change coverage report in the app repo. A screenshot cannot establish pagination uniqueness, request cursors, timer cleanup, or another platform's behavior. An app-owned XCTest can use the scaffolded wrapper through `AI_UI_TEST_SELECTOR=AppUITests/ReleaseTests/testScenario`; inspect mode always retains its own inspector.
+
+The generated planner consumes this context through `AI_UI_CHANGE_CONTEXT_PATH`. For standalone generated-planner calls, set `AI_UI_BASE_REF`, `AI_UI_HEAD_REF`, and optionally `AI_UI_RELEASE_NOTES_PATH`; existing app repos need an explicit scaffold refresh to receive these changes. No live model call is required when a reviewed scenario is supplied.
 
 The managed PR comment uses the actual action status, artifact URL, and app-runner summary. Its rendered shape is:
 
@@ -278,12 +302,12 @@ Keep expectations realistic: XCUITest on Simulator is much slower than unit test
 
 ### 2. Use The Action After Your Existing Build/Test Steps
 
-The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.4.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.5.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 The scaffolded workflow supports both `workflow_dispatch` and opt-in `pull_request` runs. On PRs, it runs only when the `ai-ui-check` label is present and the scaffolded planner defaults to a PR-aware goal sentence.
 
 The generated workflow keeps the manual GitHub form fairly narrow. It exposes `planner_goal` plus the technical knobs `simulator_name`, `simulator_runtime`, and `planner_model`. `planner_goal` maps to `AI_UI_PLANNER_GOAL`, so maintainers can ask for goals like `test adding an ingredient` without hand-authoring scenario JSON. When a planner goal is used, the action persists the exact goal text into `summary.md`, and the scaffolded planner can also emit a short `Planner Note` when it intentionally narrows a requested conditional-state path into a safer deterministic route. If the runner attached XCTest's `Failure Screenshot`, the action also extracts it from `.xcresult` into `failure-screenshot.png` before uploading artifacts. On pull requests, the action updates a single managed comment instead of posting a fresh new comment on every run, and it truncates oversized summaries instead of letting GitHub reject the whole update.
 The lower-level action still supports further overrides such as checked-in scenarios and expected screenshots. The scaffolded workflow just does not surface those as `workflow_dispatch` form fields. If you need them, edit the workflow YAML directly or call the action from a custom workflow.
-The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.4.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
+The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.5.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
 
 #### AI-Planned Scenario
 
@@ -293,7 +317,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.4.0
+  uses: Kofiloski/ios-ai-ui-check@v0.5.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
     planner-goal: test adding an ingredient
@@ -311,7 +335,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.4.0
+  uses: Kofiloski/ios-ai-ui-check@v0.5.0
   with:
     provided-scenario-path: .github/ai-ui/detail-screen.json
     simulator-name: iPhone 17 Pro
@@ -449,7 +473,7 @@ Example with OpenAI:
 
 ```yaml
 - name: UI validation
-  uses: Kofiloski/ios-ai-ui-check@v0.4.0
+  uses: Kofiloski/ios-ai-ui-check@v0.5.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
   env:
@@ -526,6 +550,6 @@ docs/
 
 ## Releases And Citation
 
-Use immutable semantic tags such as `v0.4.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
+Use immutable semantic tags such as `v0.5.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
 
 The project is MIT licensed. If you reference it in research, documentation, or a tool catalog, use [`CITATION.cff`](CITATION.cff) for the current citation metadata.

@@ -7,21 +7,26 @@ final class ScenarioRunnerUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         if let testRun, testRun.failureCount > 0 {
-            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            let imageData = await MainActor.run {
+                XCUIScreen.main.screenshot().pngRepresentation
+            }
+            let attachment = XCTAttachment(data: imageData, uniformTypeIdentifier: "public.png")
             attachment.name = "Failure Screenshot"
             attachment.lifetime = .keepAlways
             add(attachment)
         }
     }
 
+    @MainActor
     func testScenario() throws {
         let scenario = try Scenario.loadFromEnvironment()
         let runner = ScenarioRunner(scenario: scenario, testCase: self)
         try runner.execute()
     }
 
+    @MainActor
     func testInspectUI() throws {
         let inspector = UIInspector(testCase: self)
         try inspector.inspect()
@@ -86,6 +91,7 @@ private struct Scenario: Decodable {
     }
 }
 
+@MainActor
 private struct ScenarioRunner {
     private let scenario: Scenario
     private let environment: [String: String]
@@ -362,6 +368,7 @@ private struct ScenarioRunner {
     }
 }
 
+@MainActor
 private struct UIInspector {
     private let environment: [String: String]
     private let testCase: XCTestCase
@@ -467,6 +474,7 @@ private struct UISnapshot: Encodable {
     let generatedAt: String
     let hierarchyDescription: String
 
+    @MainActor
     init(app: XCUIApplication) {
         self.appState = String(describing: app.state)
         self.generatedAt = ISO8601DateFormatter().string(from: Date())

@@ -213,6 +213,7 @@ cat > "$AI_UI_ARTIFACTS_DIR/summary.md" <<'EOF'
 
 Result: passed
 EOF
+mkdir -p "$AI_UI_ARTIFACTS_DIR/Empty.xcresult"
 sleep 10
 """,
                 encoding="utf-8",

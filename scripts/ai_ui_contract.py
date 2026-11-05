@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import difflib
 import json
 import math
 import os
 import re
 import sys
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath, PureWindowsPath
@@ -1092,11 +1094,120 @@ def build_repo_scan_payload(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def collect_change_context(
+    repo_root: Path, *, base_ref: str = "", head_ref: str = "",
+    release_notes_path: Path | None = None, event: dict | None = None,
+    diff_limit: int = 20000,
+) -> dict[str, Any]:
+    """Resolve comparison inputs locally; never fetch history or silently change refs."""
+    if bool(base_ref) != bool(head_ref):
+        raise ScenarioContractError("base-ref and head-ref must be supplied together.")
+    if release_notes_path is not None and not base_ref:
+        raise ScenarioContractError("release-notes-path requires explicit base-ref and head-ref.")
+    explicit = bool(base_ref)
+    pr = (event or {}).get("pull_request") or {}
+    if explicit:
+        source = "explicit"
+    elif pr:
+        source = "pull_request"
+        base_ref = (pr.get("base") or {}).get("sha", "")
+        head_ref = (pr.get("head") or {}).get("sha", "")
+        if not base_ref or not head_ref:
+            raise ScenarioContractError("Pull request comparison is missing base/head SHAs.")
+    else:
+        source = "parent"
+        base_ref, head_ref = "HEAD^", "HEAD"
+
+    def git(*arguments: str) -> str:
+        try:
+            return subprocess.check_output(
+                ["git", "-C", str(repo_root), *arguments], text=True, stderr=subprocess.PIPE
+            )
+        except subprocess.CalledProcessError as exc:
+            raise ScenarioContractError(
+                "Change context unavailable; fetch the intended commits/history before running. "
+                + exc.stderr.strip()
+            ) from exc
+
+    try:
+        base_sha = git("rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}").strip()
+        head_sha = git("rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}").strip()
+        if explicit and git("rev-parse", "HEAD").strip() != head_sha:
+            raise ScenarioContractError("Checked-out HEAD must match head-ref; test the compared release source.")
+        comparison = [f"{base_sha}...{head_sha}"] if source == "pull_request" else [base_sha, head_sha]
+        diff = git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", *comparison, "--")
+        files = git("diff", "--name-only", "-z", *comparison, "--").rstrip("\0").split("\0") if diff else []
+    except ScenarioContractError as exc:
+        if source != "parent":
+            raise
+        return {"source": source, "available": False, "warning": str(exc), "diff": "", "release_notes": ""}
+
+    if explicit and not diff:
+        raise ScenarioContractError("Explicit comparison has no source changes; release coverage cannot be inferred.")
+    notes = ""
+    if release_notes_path is not None:
+        try:
+            notes = release_notes_path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as exc:
+            raise ScenarioContractError(f"Cannot read release notes: {exc}") from exc
+        if not notes:
+            raise ScenarioContractError("Release notes file is empty.")
+        if len(notes) > 50000:
+            raise ScenarioContractError("Release notes exceed 50,000 characters; provide a reviewed focused file.")
+    return {
+        "source": source, "available": True, "base_ref": base_ref, "head_ref": head_ref,
+        "base_sha": base_sha, "head_sha": head_sha, "changed_files": files,
+        "diff_characters": len(diff), "diff_limit": diff_limit,
+        "diff_truncated": len(diff) > diff_limit,
+        "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+        "diff": diff[:diff_limit], "release_notes": notes,
+        "warning": "Planner diff is truncated; complete diff is in change.diff." if len(diff) > diff_limit else "",
+        "_full_diff": diff,
+    }
+
+
+def change_context_summary(context: dict[str, Any]) -> str:
+    if not context.get("available"):
+        return "### Change comparison\n\nContext unavailable: " + context["warning"] + "\n"
+    return (
+        "### Change comparison\n\n"
+        f"- Source: {context['source']}\n"
+        f"- Base: `{context['base_sha']}`\n- Head: `{context['head_sha']}`\n"
+        f"- Changed files: {len(context['changed_files'])}\n"
+        f"- Planner diff truncated: {str(context['diff_truncated']).lower()} "
+        f"({min(context['diff_characters'], context['diff_limit'])}/{context['diff_characters']} characters)\n"
+        "- Complete context: change-context.json, change.diff\n\n"
+        "Coverage applies to the executed scenario only. Other release changes remain unverified "
+        "unless separately covered by app-owned tests and their reported evidence.\n"
+    )
+
+
+def require_release_assertions(scenario: dict[str, Any], context: dict[str, Any]) -> None:
+    if context.get("source") == "explicit" and not any(
+        step["action"] in {"assertVisible", "assertText"} for step in scenario["steps"]
+    ):
+        raise ScenarioContractError("Release scenarios require a visible/text assertion; launch/screenshot alone is insufficient.")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Shared scenario contract and repo discovery helpers for ios-ai-ui-check."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    change_parser = subparsers.add_parser("prepare-change-context")
+    change_parser.add_argument("--repo-root", type=Path, required=True)
+    change_parser.add_argument("--artifacts-dir", type=Path, required=True)
+    change_parser.add_argument("--base-ref", default="")
+    change_parser.add_argument("--head-ref", default="")
+    change_parser.add_argument("--release-notes-path", default="")
+    change_parser.add_argument("--event-path", default="")
+    append_parser = subparsers.add_parser("append-change-summary")
+    append_parser.add_argument("--artifacts-dir", type=Path, required=True)
+    append_parser.add_argument("--summary", type=Path, required=True)
+    release_parser = subparsers.add_parser("validate-release-scenario")
+    release_parser.add_argument("scenario_path", type=Path)
+    release_parser.add_argument("--context", type=Path, required=True)
 
     write_schema_parser = subparsers.add_parser(
         "write-schema",
@@ -1133,6 +1244,40 @@ def main() -> int:
     args = _parse_args()
 
     try:
+        if args.command == "prepare-change-context":
+            artifacts = args.artifacts_dir.resolve()
+            artifacts.mkdir(parents=True, exist_ok=True)
+            event = {}
+            if args.event_path:
+                try:
+                    event = json.loads(Path(args.event_path).read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                    raise ScenarioContractError(f"Cannot read comparison event: {exc}") from exc
+                if not isinstance(event, dict):
+                    raise ScenarioContractError("Comparison event must be a JSON object.")
+            notes_path = Path(args.release_notes_path) if args.release_notes_path else None
+            if notes_path is not None and not notes_path.is_absolute():
+                notes_path = args.repo_root / notes_path
+            context = collect_change_context(
+                args.repo_root, base_ref=args.base_ref, head_ref=args.head_ref,
+                release_notes_path=notes_path, event=event,
+            )
+            (artifacts / "change.diff").write_text(context.pop("_full_diff", ""), encoding="utf-8")
+            write_json(artifacts / "change-context.json", context)
+            return 0
+
+        if args.command == "append-change-summary":
+            context_path = args.artifacts_dir / "change-context.json"
+            if context_path.is_file() and args.summary.is_file():
+                summary = args.summary.read_text(encoding="utf-8")
+                if "### Change comparison" not in summary:
+                    args.summary.write_text(summary.rstrip() + "\n\n" + change_context_summary(read_json(context_path)), encoding="utf-8")
+            return 0
+
+        if args.command == "validate-release-scenario":
+            require_release_assertions(load_and_validate_scenario(args.scenario_path), read_json(args.context))
+            return 0
+
         if args.command == "write-schema":
             write_schema_json(args.output.resolve())
             return 0

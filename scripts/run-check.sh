@@ -360,11 +360,15 @@ cleanup() {
 
   ensure_failed_summary_is_consistent
 
-  extract_failure_screenshot_from_xcresult
+  extract_failure_screenshot_from_xcresult || true
   append_failure_screenshot_to_summary
   append_video_note_to_summary
   append_planner_goal_to_summary
   append_planner_note_to_summary
+  if [[ -f "${ARTIFACTS_DIR}/change-context.json" ]]; then
+    python3 "${ACTION_ROOT}/scripts/ai_ui_contract.py" append-change-summary \
+      --artifacts-dir "${ARTIFACTS_DIR}" --summary "${SUMMARY_PATH}"
+  fi
 
   {
     echo "status=${STATUS}"

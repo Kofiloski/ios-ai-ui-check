@@ -21,6 +21,8 @@ class ReusableWorkflowContractTests(unittest.TestCase):
         self.assertIn("upload-artifacts:", workflow_text)
         self.assertIn("record-video:", workflow_text)
         self.assertIn("max-duration-seconds:", workflow_text)
+        for name in ("base-ref", "head-ref", "release-notes-path"):
+            self.assertIn(f"{name}: ${{{{ inputs.{name} }}}}", workflow_text)
         self.assertIn("github-token: ${{ secrets['github-token'] }}", workflow_text)
         self.assertIn("comment-author-login: ${{ inputs.comment-author-login }}", workflow_text)
 
@@ -41,6 +43,7 @@ class ReusableWorkflowContractTests(unittest.TestCase):
             "- name: Checkout caller repository", maxsplit=1
         )[1].split("- name: Checkout action repository", maxsplit=1)[0]
         self.assertIn("fetch-depth: 0", caller_checkout)
+        self.assertIn("ref: ${{ inputs.head-ref || github.ref }}", caller_checkout)
         self.assertNotIn("path: repo", caller_checkout)
         self.assertNotIn("format('repo/{0}'", workflow_text)
 

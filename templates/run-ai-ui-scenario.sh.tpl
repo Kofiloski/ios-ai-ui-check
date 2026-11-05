@@ -473,7 +473,7 @@ patch_xctestrun_testing_env "$runtime_xctestrun_path" "$UI_TEST_TARGET"
 
 set +e
 test_start="$(date +%s)"
-test_selector="${UI_TEST_TARGET}/ScenarioRunnerUITests/testScenario"
+test_selector="${AI_UI_TEST_SELECTOR:-${UI_TEST_TARGET}/ScenarioRunnerUITests/testScenario}"
 if [[ "$MODE" == "inspect" ]]; then
   test_selector="${UI_TEST_TARGET}/ScenarioRunnerUITests/testInspectUI"
 fi

@@ -33,6 +33,21 @@ on:
         required: false
         type: string
         default: ""
+      base-ref:
+        description: Explicit comparison base ref; requires head-ref and locally available history.
+        required: false
+        type: string
+        default: ""
+      head-ref:
+        description: Explicit comparison head ref; must match the checked-out HEAD.
+        required: false
+        type: string
+        default: ""
+      release-notes-path:
+        description: Optional UTF-8 release notes file; requires explicit base-ref and head-ref.
+        required: false
+        type: string
+        default: ""
       expected-screenshot-path:
         description: Optional expected screenshot path.
         required: false
@@ -160,6 +175,7 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.head-ref || github.ref }}
           fetch-depth: 0
 
       - name: Checkout action repository
@@ -227,6 +243,9 @@ jobs:
           provided-scenario-path: ${{ inputs.provided-scenario-path }}
           planner-command: ${{ inputs.planner-command }}
           planner-goal: ${{ inputs.planner-goal }}
+          base-ref: ${{ inputs.base-ref }}
+          head-ref: ${{ inputs.head-ref }}
+          release-notes-path: ${{ inputs.release-notes-path }}
           expected-screenshot-path: ${{ inputs.expected-screenshot-path }}
           artifacts-dir: ${{ inputs.artifacts-dir }}
           upload-artifacts: ${{ inputs.upload-artifacts }}

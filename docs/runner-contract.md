@@ -20,6 +20,7 @@ The action exports:
 - `AI_UI_EXPECTED_SCREENSHOT_PATH`
 - `AI_UI_PLANNER_GOAL`
 - `AI_UI_PLANNER_NOTE_PATH`: optional path to a short planner-generated markdown note that explains a safer narrowed route
+- `AI_UI_CHANGE_CONTEXT_PATH`: path supplied to the planner for the resolved comparison and release notes
 - `AI_UI_SIMULATOR_NAME`
 - `AI_UI_SIMULATOR_RUNTIME`
 - `AI_UI_SIMULATOR_UDID`
@@ -80,6 +81,10 @@ The scaffolded baseline runner supports these step actions:
 - `assertVisible`
 - `assertText`
 - `screenshot`
+
+The shell wrapper also accepts an app-owned `AI_UI_TEST_SELECTOR` for execution mode, defaulting to `<Target>/ScenarioRunnerUITests/testScenario`. Use a custom XCTest when the scenario needs assertions beyond the baseline JSON interpreter. The app owns mapping its reviewed scenario to that test, deterministic fixture state, and stronger assertions. Inspect mode ignores this override. Do not use the selector to skip declared scenario work.
+
+With explicit `base-ref`/`head-ref` action inputs, comparison preparation happens before either a provided scenario or a planner is selected. Both refs must exist and the checked-out HEAD must match the compared head. `release-notes-path` requires the explicit pair. `change-context.json` records the resolved commits, notes, changed files, diff hash, and truncation; `change.diff` preserves the complete diff. The generated planner sees a bounded diff excerpt. Its existing launch/screenshot fallback is rejected for explicit release comparisons unless there is a visibility/text assertion. All summaries disclose that the result covers the executed scenario only. An app-owned coverage report should identify which release changes passed, failed, remain blocked, or require another platform.
 
 ## Scenario Validation
 

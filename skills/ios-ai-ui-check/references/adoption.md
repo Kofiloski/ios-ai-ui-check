@@ -5,7 +5,7 @@
 Use a release-pinned checkout of the upstream repository. Replace the project and scheme values with the target app's real shared scheme.
 
 ```bash
-git clone --branch v0.4.0 --depth 1 \
+git clone --branch v0.5.0 --depth 1 \
   https://github.com/Kofiloski/ios-ai-ui-check.git ../ios-ai-ui-check
 
 python3 ../ios-ai-ui-check/scripts/scaffold-app-repo.py \
@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   ui-check:
-    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.4.0
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.5.0
     with:
       provided-scenario-path: .github/ai-ui/verify-primary-flow.json
 ```
@@ -48,7 +48,7 @@ This mode does not require a model API key.
 Use planner mode only when the app repository supplies and reviews its own planner command. The reusable action does not call a provider directly.
 
 ```yaml
-- uses: Kofiloski/ios-ai-ui-check@v0.4.0
+- uses: Kofiloski/ios-ai-ui-check@v0.5.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
     planner-goal: Verify the most likely user-visible flow affected by this PR.

@@ -75,6 +75,10 @@ python3 scripts/refresh-scaffold.py --repo-root /path/to/app-repo --check --json
 
 ## Repo Tests
 
+The generated runner isolates its UI execution and inspection helpers to `@MainActor`, including their XCTest entry points. Failure teardown captures PNG data on the main actor and attaches it from the asynchronous fixture. Keep the encoded hierarchy snapshot itself nonisolated; only its UI-reading initializer needs actor isolation. This supports app repos that propagate Swift 6 language mode into the generated UI-test target without weakening their concurrency checks.
+
+`tests/test_swift_runner_compile.py` typechecks the rendered runner in Swift 6 against the selected real iOS Simulator SDK, with warnings treated as errors. It skips on non-macOS hosts or when the selected developer directory has no Simulator SDK. To exercise it locally, set a command-scoped `DEVELOPER_DIR` to the intended Xcode. Source-string checks alone cannot establish SDK isolation compatibility. Existing app scaffolds receive this fix only through an explicit refresh; preserve app-owned custom tests when refreshing managed files.
+
 Run the focused maintenance suite with:
 
 ```bash

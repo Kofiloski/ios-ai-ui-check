@@ -27,6 +27,18 @@ inputs:
     description: Optional goal sentence forwarded to the app-owned planner command.
     required: false
     default: ""
+  base-ref:
+    description: Explicit comparison base ref; requires head-ref and locally available history.
+    required: false
+    default: ""
+  head-ref:
+    description: Explicit comparison head ref; must match the checked-out HEAD.
+    required: false
+    default: ""
+  release-notes-path:
+    description: Optional UTF-8 release notes file; requires explicit base-ref and head-ref.
+    required: false
+    default: ""
   expected-screenshot-path:
     description: Optional reference screenshot forwarded to the planner and runner; no built-in image diff is performed.
     required: false
@@ -129,6 +141,9 @@ runs:
         PROVIDED_SCENARIO_PATH: ${{ inputs.provided-scenario-path }}
         PLANNER_COMMAND: ${{ inputs.planner-command }}
         PLANNER_GOAL: ${{ inputs.planner-goal }}
+        BASE_REF: ${{ inputs.base-ref }}
+        HEAD_REF: ${{ inputs.head-ref }}
+        RELEASE_NOTES_PATH: ${{ inputs.release-notes-path }}
         EXPECTED_SCREENSHOT_PATH: ${{ inputs.expected-screenshot-path }}
         ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
         SIMULATOR_NAME: ${{ inputs.simulator-name }}

@@ -5,12 +5,14 @@ Use for local interaction and visual verification through Apple's Xcode agent to
 ## Discover the available capabilities
 
 1. Check the selected developer directory and Xcode version with `xcode-select -p` and `xcodebuild -version`. If command line tools or another Xcode are selected, use a command-scoped `DEVELOPER_DIR` pointing to the intended installed Xcode; do not change the machine's global selection for a check.
-2. Discover the session's Xcode tools and read their schemas. Confirm which tools can select a workspace/scheme/destination, build, boot, install/launch, send input, and capture screenshots. Do not guess tool names, parameter names, gesture support, or accessibility-tree capabilities from another MCP server's API.
+2. Discover the session's Xcode tools and read their schemas and returned workflow guidance. Confirm which tools can select a workspace/scheme/destination, build, boot, install/launch, send input, and capture screenshots. Load a relevant bundled Xcode skill when a tool directs you to it; if that workflow requires a subagent, delegate only when the host supports it and the applicable skill authorizes it. Otherwise use the available XCTest path or report the capability gap. Do not guess tool names, parameter names, gesture support, or accessibility-tree capabilities from another MCP server's API.
 3. Confirm the project, scheme, build configuration, runtime, and explicit Simulator identifier before launching. Reuse the app's existing launch arguments, environment, and data setup; do not erase a Simulator or overwrite user data to obtain a clean state.
 
 For an agent inside Xcode, use its already available tools. For an external agent, Apple's documented setup is to open the project in Xcode, enable **Xcode > Settings > Intelligence > Allow external agents to use Xcode tools**, and connect the client to the stdio command `xcrun mcpbridge`. Respect existing connection permissions. Configure a missing connection only when requested or authorized; otherwise report the setup needed and use an existing runner if available. This skill does not require installing a third-party MCP server or an input-injection dependency.
 
 If Xcode cannot launch, the bridge cannot connect, access is denied, or required tools are missing, report the observed failure. Do not enable headless access, broaden permissions, or reinstall Xcode as part of an ordinary UI check.
+
+No third-party inspection tool is required. Use app-owned XCTest queries, `debugDescription`, and real test attachments when native interaction tools are unavailable. If repeatable coverage needs a new UI-test target, preview the existing scaffold before generating it in the app repo. Do not silently install AXe, a third-party MCP server, or another helper to turn a local verification request into a dependency setup task.
 
 ## Observe, act, verify
 
@@ -21,6 +23,8 @@ If Xcode cannot launch, the bridge cannot connect, access is denied, or required
 5. Compare the final state with the requested outcome. Save available screenshots and a concise action record with the build/source revision, Xcode version, scheme/configuration, Simulator identifier/runtime, locale/appearance, launch setup, and observed versus expected behavior. Redact secrets and personal data from shared evidence.
 
 Use an app-owned test or scenario when repeatable coverage is needed. Native input can help discover the path, but a successful coordinate tap does not establish a stable accessibility contract. For an identifier/type failure, inspect with the failing automation tool and replay that exact test after the patch. Keep failures as failures rather than replacing a broken test with a screenshot-only check.
+
+When the observed result is insufficient to explain a failure, use [simulator-diagnostics.md](simulator-diagnostics.md) for bounded app logs, persisted-state inspection, and focused runtime debugging. Collect only evidence that helps distinguish the remaining causes; ordinary UI verification does not require every diagnostic.
 
 ## Evidence boundaries
 
