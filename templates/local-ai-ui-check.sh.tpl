@@ -13,7 +13,10 @@ SIM_DEVICE_ID="${SIM_DEVICE_ID:-}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$ROOT_DIR/artifacts/ai-ui/local-$(date +%Y%m%d-%H%M%S)}"
 DERIVED_DATA_PATH="${AI_UI_DERIVED_DATA_PATH:-$ROOT_DIR/.derivedData/ai-ui}"
 PLANNER_GOAL="${AI_UI_PLANNER_GOAL:-${PLANNER_GOAL:-}}"
+PLANNER_PROVIDER="${AI_UI_PLANNER_PROVIDER:-${PLANNER_PROVIDER:-}}"
 PLANNER_MODEL="${AI_UI_PLANNER_MODEL:-${PLANNER_MODEL:-}}"
+PLANNER_EFFORT="${AI_UI_PLANNER_EFFORT:-${PLANNER_EFFORT:-}}"
+PLANNER_BASE_URL="${AI_UI_PLANNER_BASE_URL:-${PLANNER_BASE_URL:-}}"
 SCENARIO_PATH=""
 MODE=""
 USE_EXAMPLE_SCENARIO=0
@@ -29,7 +32,11 @@ Options:
   --scenario PATH           Run the specified scenario JSON file.
   --use-example-scenario    Run the checked-in scenario example.
   --goal TEXT               Ask the planner to verify a short human goal.
-  --planner-model MODEL     Planner model passed through as AI_UI_PLANNER_MODEL.
+  --provider PROVIDER       openai (default), anthropic, or openai-compatible.
+  --model MODEL             Model ID; required for non-OpenAI providers.
+  --effort LEVEL            Provider effort level; default leaves it to the model.
+  --base-url URL            API base URL for openai-compatible, including /v1.
+  --planner-model MODEL     Alias for --model.
   --artifacts-dir DIR       Directory for logs, screenshots, and xcresult output.
   --derived-data-path DIR   DerivedData path for build-for-testing output.
   --simulator-name NAME     Simulator device name. Default: $DEFAULT_SIMULATOR_NAME
@@ -43,7 +50,8 @@ Examples:
   $(basename "$0") --scenario $DEFAULT_SCENARIO_RELATIVE_PATH
 
 Notes:
-  - AI planning requires OPENAI_API_KEY and scripts/plan-ai-ui-scenario.sh.
+  - AI planning uses the selected provider key (or AI_UI_PLANNER_API_KEY).
+  - OpenAI-compatible local endpoints can run without a key.
   - The helper does not silently fall back from AI planning to the example scenario.
     If you want the checked-in example, pass --use-example-scenario explicitly.
 EOF
@@ -79,7 +87,22 @@ while [[ $# -gt 0 ]]; do
       PLANNER_GOAL="$2"
       shift 2
       ;;
-    --planner-model)
+    --provider|--planner-provider)
+      [[ $# -ge 2 && -n "$2" ]] || die "--provider requires a value"
+      PLANNER_PROVIDER="$2"
+      shift 2
+      ;;
+    --effort|--planner-effort)
+      [[ $# -ge 2 && -n "$2" ]] || die "--effort requires a value"
+      PLANNER_EFFORT="$2"
+      shift 2
+      ;;
+    --base-url|--planner-base-url)
+      [[ $# -ge 2 && -n "$2" ]] || die "--base-url requires a value"
+      PLANNER_BASE_URL="$2"
+      shift 2
+      ;;
+    --model|--planner-model)
       [[ $# -ge 2 ]] || die "--planner-model requires a value"
       PLANNER_MODEL="$2"
       shift 2
@@ -160,7 +183,6 @@ if [[ "$MODE" != "ai-planned" ]]; then
 fi
 
 if [[ "$MODE" == "ai-planned" ]]; then
-  [[ -n "${OPENAI_API_KEY:-}" ]] || die "AI planning requires OPENAI_API_KEY. Pass --use-example-scenario or --scenario if you want a deterministic run."
   [[ -x "$ROOT_DIR/scripts/plan-ai-ui-scenario.sh" ]] || die "Planner script not found or not executable: $ROOT_DIR/scripts/plan-ai-ui-scenario.sh"
 fi
 
@@ -177,9 +199,10 @@ if [[ -n "$SIM_DEVICE_ID" ]]; then
   export AI_UI_SIMULATOR_UDID="$SIM_DEVICE_ID"
 fi
 
-if [[ -n "$PLANNER_MODEL" ]]; then
-  export AI_UI_PLANNER_MODEL="$PLANNER_MODEL"
-fi
+export AI_UI_PLANNER_PROVIDER="$PLANNER_PROVIDER"
+export AI_UI_PLANNER_MODEL="$PLANNER_MODEL"
+export AI_UI_PLANNER_EFFORT="$PLANNER_EFFORT"
+export AI_UI_PLANNER_BASE_URL="$PLANNER_BASE_URL"
 
 if [[ "$MODE" == "ai-planned" ]]; then
   SCENARIO_PATH="$ARTIFACTS_DIR/scenario.json"
@@ -195,7 +218,9 @@ if [[ "$MODE" == "ai-planned" ]]; then
     echo "Local AI UI Check"
     echo "- Mode: $MODE"
     echo "- Goal: ${PLANNER_GOAL:-none}"
+    echo "- Planner provider: ${AI_UI_PLANNER_PROVIDER:-openai}"
     echo "- Planner model: ${AI_UI_PLANNER_MODEL:-default}"
+    echo "- Planner effort: ${AI_UI_PLANNER_EFFORT:-default}"
     echo "- Simulator: $SIM_DEVICE_NAME / iOS $SIM_DEVICE_RUNTIME"
     echo "- Artifacts: $ARTIFACTS_DIR"
   }

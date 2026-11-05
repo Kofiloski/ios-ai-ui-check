@@ -6,6 +6,10 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR is required}"
 PROVIDED_SCENARIO_PATH="${PROVIDED_SCENARIO_PATH:-}"
 PLANNER_COMMAND="${PLANNER_COMMAND:-}"
 PLANNER_GOAL="${PLANNER_GOAL:-}"
+export AI_UI_PLANNER_PROVIDER="${PLANNER_PROVIDER:-${AI_UI_PLANNER_PROVIDER:-}}"
+export AI_UI_PLANNER_MODEL="${PLANNER_MODEL:-${AI_UI_PLANNER_MODEL:-}}"
+export AI_UI_PLANNER_EFFORT="${PLANNER_EFFORT:-${AI_UI_PLANNER_EFFORT:-}}"
+export AI_UI_PLANNER_BASE_URL="${PLANNER_BASE_URL:-${AI_UI_PLANNER_BASE_URL:-}}"
 ACTION_ROOT="${ACTION_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUNNER_SCRIPT="${RUNNER_SCRIPT:-./scripts/run-ai-ui-scenario.sh}"
 SIMULATOR_NAME="${SIMULATOR_NAME:-}"
@@ -139,6 +143,9 @@ write_planner_request() {
     echo "## iOS AI UI Planner Request"
     echo
     echo "- Planner command: ${PLANNER_COMMAND}"
+    echo "- Requested provider: ${AI_UI_PLANNER_PROVIDER:-planner default}"
+    echo "- Requested model: ${AI_UI_PLANNER_MODEL:-planner default}"
+    echo "- Requested effort: ${AI_UI_PLANNER_EFFORT:-planner default}"
     echo "- Workspace: ${WORKSPACE_ROOT}"
     echo "- Planner context: ${PLANNER_CONTEXT_PATH}"
     if [[ -n "${EXPECTED_SCREENSHOT_PATH:-}" ]]; then
@@ -307,17 +314,17 @@ validate_json() {
 }
 
 validate_accessibility_ids() {
-  local ui_tree_arg=()
+  local command=(
+    python3 "${AI_UI_CONTRACT_SCRIPT}" validate-generated-scenario
+    "$1"
+    --repo-root "${WORKSPACE_ROOT}"
+    --planner-context "${PLANNER_CONTEXT_PATH}"
+    --config-dir "${AI_UI_CONFIG_DIR}"
+  )
   if [[ -n "${BEFORE_PLANNING_UI_TREE_PATH:-}" ]]; then
-    ui_tree_arg=(--before-planning-ui-tree "${BEFORE_PLANNING_UI_TREE_PATH}")
+    command+=(--before-planning-ui-tree "${BEFORE_PLANNING_UI_TREE_PATH}")
   fi
-
-  python3 "${AI_UI_CONTRACT_SCRIPT}" validate-generated-scenario \
-    "$1" \
-    --repo-root "${WORKSPACE_ROOT}" \
-    --planner-context "${PLANNER_CONTEXT_PATH}" \
-    --config-dir "${AI_UI_CONFIG_DIR}" \
-    "${ui_tree_arg[@]}"
+  "${command[@]}"
 }
 
 run_live_inspection() {

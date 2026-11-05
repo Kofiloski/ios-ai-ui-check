@@ -749,7 +749,12 @@ class FakeResponse:
     def read(self):
         return Path(os.environ["FAKE_OPENAI_RESPONSE_PATH"]).read_bytes()
 
-urllib.request.urlopen = lambda request: FakeResponse()
+class FakeOpener:
+    def open(self, request, timeout):
+        Path(os.environ["FAKE_REQUEST_PATH"]).write_bytes(request.data)
+        return FakeResponse()
+
+urllib.request.build_opener = lambda *args: FakeOpener()
 """,
                 encoding="utf-8",
             )
@@ -764,22 +769,63 @@ urllib.request.urlopen = lambda request: FakeResponse()
                     "PYTHONPATH": str(python_hook_dir),
                 }
             )
-            subprocess.run(
-                [str(repo_root / "scripts" / "plan-ai-ui-scenario.sh")],
-                cwd=repo_root,
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            for provider in ("openai", "anthropic"):
+                with self.subTest(provider=provider):
+                    if provider == "anthropic":
+                        response_path.write_text(json.dumps({"stop_reason": "end_turn", "content": [
+                            {"type": "thinking", "thinking": "Hidden"},
+                            {"type": "text", "text": json.dumps(strict_scenario)},
+                        ]}), encoding="utf-8")
+                    request_path = root / f"{provider}-request.json"
+                    provider_env = {**env, "AI_UI_PLANNER_PROVIDER": provider,
+                                    "AI_UI_PLANNER_MODEL": "claude-sonnet-4-6" if provider == "anthropic" else "gpt-5-mini",
+                                    "AI_UI_PLANNER_EFFORT": "high", "FAKE_REQUEST_PATH": str(request_path),
+                                    "ANTHROPIC_API_KEY": "test-anthropic-key"}
+                    if provider == "anthropic":
+                        provider_env.pop("OPENAI_API_KEY", None)
+                    subprocess.run(
+                        [str(repo_root / "scripts" / "plan-ai-ui-scenario.sh")],
+                        cwd=repo_root, env=provider_env, check=True, capture_output=True, text=True,
+                    )
+                    request = json.loads(request_path.read_text())
+                    self.assertEqual(request["model"], provider_env["AI_UI_PLANNER_MODEL"])
+                    effort = request["output_config"]["effort"] if provider == "anthropic" else request["reasoning"]["effort"]
+                    self.assertEqual(effort, "high")
+                    normalized = json.loads(scenario_output_path.read_text(encoding="utf-8"))
+                    self.assertEqual(normalized["steps"][0]["environment"], {"UITESTING": "1"})
+                    self.assertNotIn("id", normalized["steps"][0])
+                    self.assertFalse((repo_root / "planner-note.md").exists())
 
-            normalized = json.loads(scenario_output_path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                normalized["steps"][0]["environment"],
-                {"UITESTING": "1"},
-            )
-            self.assertNotIn("id", normalized["steps"][0])
-            self.assertFalse((repo_root / "planner-note.md").exists())
+    def test_local_helper_forwards_provider_model_and_effort_without_openai_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "FixtureApp"
+            shutil.copytree(FIXTURE_APP_ROOT, repo_root)
+            subprocess.run([sys.executable, str(MODULE_PATH), "--repo-root", str(repo_root),
+                            "--project", "FixtureApp.xcodeproj", "--scheme", "FixtureApp"],
+                           check=True, capture_output=True, text=True)
+            runner = repo_root / "scripts/run-ai-ui-scenario.sh"
+            runner.write_text("#!/bin/bash\nexit 0\n")
+            planner_path = repo_root / "scripts/plan-ai-ui-scenario.sh"
+            planner_path.write_text("""#!/bin/bash
+set -eu
+printf '%s\\n' "$AI_UI_PLANNER_PROVIDER" "$AI_UI_PLANNER_MODEL" "$AI_UI_PLANNER_EFFORT" > "$AI_UI_ARTIFACTS_DIR/selected.txt"
+printf '%s\\n' '{"name":"Fixture","steps":[{"action":"wait","seconds":0}]}' > "$AI_UI_SCENARIO_OUTPUT_PATH"
+""")
+            artifacts = Path(tmp) / "artifacts"
+            env = {key: value for key, value in os.environ.items()
+                   if key not in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AI_UI_PLANNER_API_KEY"}}
+            result = subprocess.run([str(repo_root / "scripts/local-ai-ui-check.sh"),
+                                     "--provider", "anthropic", "--model", "claude-sonnet-4-6", "--effort", "high",
+                                     "--artifacts-dir", str(artifacts)],
+                                    env=env, cwd=repo_root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((artifacts / "selected.txt").read_text().splitlines(),
+                             ["anthropic", "claude-sonnet-4-6", "high"])
+            # Deterministic runs bypass provider configuration and credentials.
+            result = subprocess.run([str(repo_root / "scripts/local-ai-ui-check.sh"),
+                                     "--use-example-scenario", "--provider", "unused-provider"],
+                                    env=env, cwd=repo_root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_generated_runner_validates_scenario_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

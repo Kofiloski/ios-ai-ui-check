@@ -67,6 +67,7 @@ def main() -> int:
         "scripts/local-ai-ui-check.sh",
         "scripts/plan-ai-ui-scenario.sh",
         "scripts/ai_ui_contract.py",
+        "scripts/ai_ui_planner.py",
         scaffold_manifest_relative_path.as_posix(),
     ]
     customizable_files = [
@@ -1060,6 +1061,7 @@ def managed_files_for_manifest(*, ui_test_target_name: str, workflow_generated: 
         "scripts/local-ai-ui-check.sh",
         "scripts/plan-ai-ui-scenario.sh",
         "scripts/ai_ui_contract.py",
+        "scripts/ai_ui_planner.py",
         ".github/ai-ui/scaffold-manifest.json",
     ]
     if workflow_generated:
@@ -1180,6 +1182,11 @@ def build_planned_files(
             relative_path="scripts/ai_ui_contract.py",
             content=(action_repo_root / "scripts" / "ai_ui_contract.py").read_text(encoding="utf-8"),
             executable=True,
+        ),
+        PlannedFile(
+            path=repo_root / "scripts" / "ai_ui_planner.py",
+            relative_path="scripts/ai_ui_planner.py",
+            content=(action_repo_root / "scripts" / "ai_ui_planner.py").read_text(encoding="utf-8"),
         ),
         PlannedFile(
             path=planner_context_target,

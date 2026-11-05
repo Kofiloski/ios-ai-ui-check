@@ -1,5 +1,6 @@
 ---
 name: ios-ai-ui-check
+license: MIT
 description: Run local iOS Simulator UI checks and diagnose failures with native Xcode tools, logs, and app-state inspection, or add, operate, and debug reproducible GitHub Actions checks with ios-ai-ui-check. Use for direct Simulator interaction, exploratory UI verification, deterministic XCUITest replay, app-owned runner or scenario setup, and planner, Simulator, runner, or artifact failures. Keep launch state, data, accessibility identifiers, interactions, and assertions in the app repository; keep the reusable action provider-agnostic.
 ---
 
@@ -14,7 +15,7 @@ Use Xcode's native Simulator controls for focused local verification and the pub
    - For local exploration, reproducing a visible bug, or checking a UI change, prefer Xcode 27 or later's native Simulator tools when exposed to this session. Read [references/xcode-simulator.md](references/xcode-simulator.md), discover the actual tool schemas, and run the focused interaction loop. A local check does not require scaffolding a UI-test target, planner, or GitHub workflow. If native tools are unavailable, use existing app-local automation; report the limitation if neither path is available.
    - When a failure needs explanation beyond the visible UI, read [references/simulator-diagnostics.md](references/simulator-diagnostics.md). Correlate the same reproduction with bounded app logs, relevant persisted state, or debugger observations. Use existing Xcode, `simctl`, and app-owned helpers first; a Simulator jailbreak or injection dependency is unnecessary for this workflow.
    - Prefer a checked-in scenario for required or security-sensitive CI.
-   - Use a planner goal when exploratory coverage is useful and the app repo can explicitly control the context sent to its chosen provider.
+   - Use a planner goal when exploratory coverage is useful and the app repo can explicitly control the context sent to its chosen provider. Respect the requested provider, model, and effort; check the installed planner/action supports those options. Anthropic uses its native adapter when available. Read the planner settings section in `references/adoption.md` before changing credentials or configuration.
    - When repeatable regression coverage is requested, preserve the observed path and expectations in the app's existing XCUITest or scenario contract, then replay through that runner.
 3. For CI integration, read `references/adoption.md` before scaffolding or editing a workflow. The remaining integration steps apply to deterministic and planner modes.
 4. Pin the public action to a release tag or commit SHA. Do not track `main` in stable CI.

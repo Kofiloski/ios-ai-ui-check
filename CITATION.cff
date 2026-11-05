@@ -8,7 +8,7 @@ authors:
 repository-code: https://github.com/Kofiloski/ios-ai-ui-check
 url: https://github.com/Kofiloski/ios-ai-ui-check
 license: MIT
-version: 0.5.0
+version: 0.6.0
 date-released: 2026-11-05
 abstract: >-
   A provider-neutral GitHub Action and deterministic scaffold for running

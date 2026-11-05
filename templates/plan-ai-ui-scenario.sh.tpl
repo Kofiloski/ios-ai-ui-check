@@ -5,32 +5,26 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_SCENARIO_RELATIVE_PATH=__SCENARIO_PATH_SHELL__
 OUTPUT_PATH="${AI_UI_SCENARIO_OUTPUT_PATH:?AI_UI_SCENARIO_OUTPUT_PATH is required}"
-OPENAI_API_KEY="${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
-OPENAI_MODEL="${AI_UI_PLANNER_MODEL:-${AI_UI_OPENAI_MODEL:-gpt-5-mini}}"
 EXPECTED_SCREENSHOT_PATH="${AI_UI_EXPECTED_SCREENSHOT_PATH:-}"
 PLANNER_CONTEXT_PATH="${AI_UI_PLANNER_CONTEXT_PATH:-$ROOT_DIR/.github/ai-ui/planner-context.md}"
 SCENARIO_EXAMPLE_PATH="${AI_UI_SCENARIO_EXAMPLE_PATH:-$ROOT_DIR/$DEFAULT_SCENARIO_RELATIVE_PATH}"
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 
-python3 - "$ROOT_DIR" "$OUTPUT_PATH" "$OPENAI_MODEL" "$EXPECTED_SCREENSHOT_PATH" "$PLANNER_CONTEXT_PATH" "$SCENARIO_EXAMPLE_PATH" <<'PY'
+python3 - "$ROOT_DIR" "$OUTPUT_PATH" "$EXPECTED_SCREENSHOT_PATH" "$PLANNER_CONTEXT_PATH" "$SCENARIO_EXAMPLE_PATH" <<'PY'
 import base64
 import json
 import mimetypes
 import os
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 root_dir = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
-model = sys.argv[3]
-expected_screenshot_path = Path(sys.argv[4]) if sys.argv[4] else None
-planner_context_path = Path(sys.argv[5])
-scenario_example_path = Path(sys.argv[6])
-api_key = os.environ["OPENAI_API_KEY"]
+expected_screenshot_path = Path(sys.argv[3]) if sys.argv[3] else None
+planner_context_path = Path(sys.argv[4])
+scenario_example_path = Path(sys.argv[5])
 repository = os.environ.get("AI_UI_REPOSITORY", "")
 planner_goal = os.environ.get("AI_UI_PLANNER_GOAL", "").strip()
 app_scheme = __SCHEME_PYTHON__
@@ -60,13 +54,13 @@ planner_draft_scenario_path = Path(planner_draft_scenario_path_raw) if planner_d
 sys.path.insert(0, str(root_dir / "scripts"))
 
 from ai_ui_contract import (  # noqa: E402
-    OPENAI_PLANNER_SCHEMA,
+    PLANNER_SCHEMA,
     collect_accessibility_strings,
     collect_change_context,
     require_release_assertions,
     collect_launch_hints,
     collect_ui_tree_identifiers,
-    normalize_openai_planner_scenario,
+    normalize_planner_scenario,
     read_json,
     read_text,
     render_markdown_list,
@@ -74,6 +68,13 @@ from ai_ui_contract import (  # noqa: E402
     validate_generated_scenario,
     write_json,
 )
+
+from ai_ui_planner import PlannerError, generate_scenario, load_config
+
+try:
+    planner_config = load_config()
+except PlannerError as exc:
+    raise SystemExit(str(exc)) from None
 
 
 def load_event_payload(path: Path | None) -> dict:
@@ -302,57 +303,13 @@ if expected_screenshot_path and expected_screenshot_path.exists():
     if image_content is not None:
         content.append(image_content)
 
-payload = {
-    "model": model,
-    "instructions": system_prompt,
-    "input": [
-        {
-            "role": "user",
-            "content": content,
-        }
-    ],
-    "text": {
-        "format": {
-            "type": "json_schema",
-            "name": "ios_ui_scenario",
-            "schema": OPENAI_PLANNER_SCHEMA,
-            "strict": True,
-        }
-    },
-}
-
-request = urllib.request.Request(
-    "https://api.openai.com/v1/responses",
-    data=json.dumps(payload).encode("utf-8"),
-    headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    },
-    method="POST",
-)
-
 try:
-    with urllib.request.urlopen(request) as response:
-        response_payload = json.loads(response.read().decode("utf-8"))
-except urllib.error.HTTPError as exc:
-    details = exc.read().decode("utf-8", errors="replace")
-    raise SystemExit(f"OpenAI request failed: HTTP {exc.code}\n{details}")
-
-output_text_parts: list[str] = []
-for item in response_payload.get("output", []):
-    if item.get("type") != "message":
-        continue
-    for content_item in item.get("content", []):
-        if content_item.get("type") == "output_text":
-            output_text_parts.append(content_item.get("text", ""))
-
-if not output_text_parts:
-    raise SystemExit("OpenAI response did not include output_text content")
-
-planner_scenario = json.loads("".join(output_text_parts))
+    planner_scenario = generate_scenario(planner_config, system_prompt, content, PLANNER_SCHEMA)
+except PlannerError as exc:
+    raise SystemExit(str(exc)) from None
 if planner_draft_scenario_path is not None:
     write_json(planner_draft_scenario_path, planner_scenario)
-scenario = normalize_openai_planner_scenario(planner_scenario)
+scenario = normalize_planner_scenario(planner_scenario)
 require_release_assertions(scenario, change_context)
 validate_generated_scenario(
     scenario,

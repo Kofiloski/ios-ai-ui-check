@@ -28,6 +28,26 @@ on:
         required: false
         type: string
         default: ""
+      planner-provider:
+        description: Optional provider forwarded to the app-owned planner (openai, anthropic, or openai-compatible in the scaffold).
+        required: false
+        type: string
+        default: ""
+      planner-model:
+        description: Optional model ID forwarded to the app-owned planner.
+        required: false
+        type: string
+        default: ""
+      planner-effort:
+        description: Optional reasoning effort forwarded unchanged to the app-owned planner.
+        required: false
+        type: string
+        default: ""
+      planner-base-url:
+        description: Optional API base URL for the scaffolded openai-compatible planner.
+        required: false
+        type: string
+        default: ""
       planner-goal:
         description: Optional short sentence describing what the planner should verify.
         required: false
@@ -227,11 +247,12 @@ jobs:
               delimiter = f"IOS_AI_UI_CHECK_{secrets.token_hex(16)}"
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
-              handle.write(f"{name}<<{delimiter}\n")
-              handle.write(value)
-              if not value.endswith("\n"):
-                  handle.write("\n")
-              handle.write(f"{delimiter}\n")
+              for name in dict.fromkeys((name, "AI_UI_PLANNER_API_KEY")):
+                  handle.write(f"{name}<<{delimiter}\n")
+                  handle.write(value)
+                  if not value.endswith("\n"):
+                      handle.write("\n")
+                  handle.write(f"{delimiter}\n")
           PY
 
       - name: Run AI UI validation
@@ -242,6 +263,10 @@ jobs:
           simulator-runtime: ${{ inputs.simulator-runtime }}
           provided-scenario-path: ${{ inputs.provided-scenario-path }}
           planner-command: ${{ inputs.planner-command }}
+          planner-provider: ${{ inputs.planner-provider }}
+          planner-model: ${{ inputs.planner-model }}
+          planner-effort: ${{ inputs.planner-effort }}
+          planner-base-url: ${{ inputs.planner-base-url }}
           planner-goal: ${{ inputs.planner-goal }}
           base-ref: ${{ inputs.base-ref }}
           head-ref: ${{ inputs.head-ref }}

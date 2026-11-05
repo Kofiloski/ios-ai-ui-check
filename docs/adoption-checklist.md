@@ -37,7 +37,7 @@ Generated workflows support a repository variable named `IOS_AI_UI_CHECK_REF`.
 
 Set it to one of:
 
-- a release tag such as `v0.5.0`
+- a release tag such as `v0.6.0`
 - a moving major tag such as `v0`
 - a commit SHA when you want a one-off hotfix pin
 
@@ -45,7 +45,8 @@ If the variable is absent, the generated workflow falls back to `main`.
 
 ## 4. Add Secrets Only When Needed
 
-- add `OPENAI_API_KEY` if the scaffolded planner is enabled
+- select provider, model, and effort supported by the installed planner/action revision; see [planner configuration](planner-configuration.md)
+- add the selected provider credential (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `AI_UI_PLANNER_API_KEY`) when AI planning is enabled
 - add `ACTION_REPO_TOKEN` only when the action repository is private
 
 If PRs come from forks, remember that `pull_request` workflows do not receive repository secrets.

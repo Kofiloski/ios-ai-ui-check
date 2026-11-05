@@ -22,7 +22,7 @@ The reusable action owns orchestration and evidence. Your app repo keeps control
 The installable [`ios-ai-ui-check` skill](skills/ios-ai-ui-check/SKILL.md) supports focused local verification with Xcode 27 or later's native Simulator tools, as well as reproducible checks through this action:
 
 ```bash
-gh skill install Kofiloski/ios-ai-ui-check ios-ai-ui-check@v0.5.0 --agent codex --scope user
+gh skill install Kofiloski/ios-ai-ui-check ios-ai-ui-check@v0.6.0 --agent codex --scope user
 ```
 
 For a local check, the agent discovers the exposed Xcode tool schemas, selects the intended project/scheme and Simulator, then builds, launches, interacts, and captures the observed result. External agents need Apple's [MCP bridge setup](https://developer.apple.com/documentation/xcode/giving-external-agents-access-to-xcode). An installed Xcode version alone does not establish that these tools are connected.
@@ -40,7 +40,7 @@ Local verification uses available Xcode/XCTest and Apple command-line tools. AXe
 First scaffold the app-owned runner and scenario from a local checkout:
 
 ```bash
-git clone --branch v0.5.0 --depth 1 \
+git clone --branch v0.6.0 --depth 1 \
   https://github.com/Kofiloski/ios-ai-ui-check.git ../ios-ai-ui-check
 
 python3 ../ios-ai-ui-check/scripts/scaffold-app-repo.py \
@@ -66,7 +66,7 @@ permissions:
 
 jobs:
   ui-check:
-    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.5.0
+    uses: Kofiloski/ios-ai-ui-check/.github/workflows/run.yml@v0.6.0
     with:
       provided-scenario-path: .github/ai-ui/verify-primary-flow.json
 ```
@@ -141,7 +141,9 @@ flowchart LR
   Evidence --> Review["Artifact upload + managed PR comment"]
 ```
 
-The composite action does not call an AI provider. A checked-in scenario stays fully deterministic. On the optional AI path, the reusable workflow can expose a planner secret, but only the `planner-command` supplied by the app repo consumes it. That command chooses the provider and exactly what context leaves the runner. The generated planner is an OpenAI-backed example and can receive the inspected screenshot, UI tree, planner context, and discovered UI identifiers, so review it before adding credentials. Replace it with another provider or a local planner without changing the action contract.
+The composite action does not call an AI provider. A checked-in scenario stays fully deterministic. On the optional AI path, the reusable workflow can expose a planner secret, but only the `planner-command` supplied by the app repo consumes it. That command chooses the provider and exactly what context leaves the runner. The generated planner supports Anthropic, OpenAI, and explicitly configured OpenAI-compatible endpoints and can receive the inspected screenshot, UI tree, planner context, and discovered UI identifiers, so review it before adding credentials. Replace it with another provider or a local planner without changing the action contract.
+
+Available since `v0.6.0`: select `planner-provider`, `planner-model`, and `planner-effort`, including native Claude planning with `ANTHROPIC_API_KEY`. [Configuration and upgrade instructions](docs/planner-configuration.md).
 
 ## Companion Tools
 
@@ -220,7 +222,7 @@ python3 "${IOS_AI_UI_CHECK_ROOT}/scripts/refresh-scaffold.py" --repo-root .
 
 If `ios-ai-ui-check` is private, add an `ACTION_REPO_TOKEN` secret in the app repo so the generated workflow can check out the private action repository.
 
-If you use the scaffolded planner, also add `OPENAI_API_KEY` in the app repo.
+If you use the scaffolded planner, add `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the generic `AI_UI_PLANNER_API_KEY` for the selected provider. See [planner configuration](docs/planner-configuration.md) for source-version availability and setup.
 
 The generated workflow is a smoke workflow. It builds the app for testing and runs the AI UI action, but it does not run the app repo's unit-test targets for you. It also writes a short timing summary to the GitHub step summary so boot and build durations are visible without reading interleaved logs by eye, and it writes `xcodebuild-build-for-testing.log` into the uploaded artifact directory for slow-build diagnosis.
 
@@ -302,12 +304,12 @@ Keep expectations realistic: XCUITest on Simulator is much slower than unit test
 
 ### 2. Use The Action After Your Existing Build/Test Steps
 
-The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.5.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.6.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 The scaffolded workflow supports both `workflow_dispatch` and opt-in `pull_request` runs. On PRs, it runs only when the `ai-ui-check` label is present and the scaffolded planner defaults to a PR-aware goal sentence.
 
-The generated workflow keeps the manual GitHub form fairly narrow. It exposes `planner_goal` plus the technical knobs `simulator_name`, `simulator_runtime`, and `planner_model`. `planner_goal` maps to `AI_UI_PLANNER_GOAL`, so maintainers can ask for goals like `test adding an ingredient` without hand-authoring scenario JSON. When a planner goal is used, the action persists the exact goal text into `summary.md`, and the scaffolded planner can also emit a short `Planner Note` when it intentionally narrows a requested conditional-state path into a safer deterministic route. If the runner attached XCTest's `Failure Screenshot`, the action also extracts it from `.xcresult` into `failure-screenshot.png` before uploading artifacts. On pull requests, the action updates a single managed comment instead of posting a fresh new comment on every run, and it truncates oversized summaries instead of letting GitHub reject the whole update.
+The generated workflow keeps the manual GitHub form fairly narrow. It exposes `planner_goal` plus the technical knobs `simulator_name`, `simulator_runtime`, `planner_provider`, `planner_model`, `planner_effort`, and `planner_base_url`. `planner_goal` maps to `AI_UI_PLANNER_GOAL`, so maintainers can ask for goals like `test adding an ingredient` without hand-authoring scenario JSON. When a planner goal is used, the action persists the exact goal text into `summary.md`, and the scaffolded planner can also emit a short `Planner Note` when it intentionally narrows a requested conditional-state path into a safer deterministic route. If the runner attached XCTest's `Failure Screenshot`, the action also extracts it from `.xcresult` into `failure-screenshot.png` before uploading artifacts. On pull requests, the action updates a single managed comment instead of posting a fresh new comment on every run, and it truncates oversized summaries instead of letting GitHub reject the whole update.
 The lower-level action still supports further overrides such as checked-in scenarios and expected screenshots. The scaffolded workflow just does not surface those as `workflow_dispatch` form fields. If you need them, edit the workflow YAML directly or call the action from a custom workflow.
-The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.5.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
+The generated workflow also supports a repository variable named `IOS_AI_UI_CHECK_REF`. Set that variable to a tag such as `v0.6.0`, a moving tag such as `v0`, or a commit SHA when you want the secondary checkout to pin to a specific reusable-repo version. If the variable is absent, the generated workflow falls back to `main`. This repo also ships a manual [release workflow](.github/workflows/release.yml) that runs the release-readiness suite, creates the requested semantic tag, optionally updates the moving major tag, and then creates the GitHub release notes.
 
 #### AI-Planned Scenario
 
@@ -317,14 +319,17 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.5.0
+  uses: Kofiloski/ios-ai-ui-check@v0.6.0
   with:
     planner-command: ./scripts/plan-ai-ui-scenario.sh
+    planner-provider: anthropic
+    planner-model: claude-sonnet-4-6
+    planner-effort: high
     planner-goal: test adding an ingredient
     simulator-name: iPhone 17 Pro
     simulator-runtime: "26.2"
   env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 #### Provided Scenario Override
@@ -335,7 +340,7 @@ The generated workflow also supports a repository variable named `IOS_AI_UI_CHEC
 
 - name: UI validation
   if: success()
-  uses: Kofiloski/ios-ai-ui-check@v0.5.0
+  uses: Kofiloski/ios-ai-ui-check@v0.6.0
   with:
     provided-scenario-path: .github/ai-ui/detail-screen.json
     simulator-name: iPhone 17 Pro
@@ -351,6 +356,8 @@ Conditionally required:
 Optional:
 
 - `provided-scenario-path`: explicit checked-in scenario path; leave it empty to use AI planning, or point it at a checked-in scenario file for a deterministic override
+- `planner-provider`, `planner-model`, `planner-effort`: optional settings forwarded to the app-owned planner; nonempty inputs override inherited `AI_UI_PLANNER_*` values
+- `planner-base-url`: optional compatible API base URL; the scaffold uses it only for `openai-compatible`
 - `planner-goal`: optional short sentence describing what the planner should verify; when omitted on pull_request events, the scaffolded planner defaults to verifying the most likely user-visible flow affected by the PR
 - `simulator-name`: default `iPhone 17 Pro`
 - `simulator-runtime`: default `26.2`
@@ -460,33 +467,31 @@ The action also exports:
 
 For compatibility with older scaffolded app repos, the action still exports deprecated aliases `AI_UI_CURRENT_SCREENSHOT_PATH` and `AI_UI_CURRENT_UI_TREE_PATH` with the same values.
 
-This repo does not hard-code an AI provider. The planner command can call OpenAI, another model provider, or a local planning tool. The scaffolded default planner uses OpenAI, but you can replace that generated planner script and use any provider you want.
+The core action delegates model calls to the app-owned planner. The generated planner supports native Anthropic Messages, OpenAI Responses, and explicitly configured OpenAI-compatible Chat Completions endpoints. Other integrations can keep using a custom `planner-command`.
+
+### Provider, Model, And Effort
+
+Provider, model, and effort selection is available from `v0.6.0`. Refresh existing app scaffolds and pin the action to that release or a reviewed newer commit; installing skill guidance alone does not upgrade generated files or pinned actions.
+
+With `ANTHROPIC_API_KEY` set:
+
+```bash
+./scripts/local-ai-ui-check.sh \
+  --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --effort high \
+  --goal "Verify settings persist after reopening the app"
+```
+
+The matching action/reusable-workflow inputs are `planner-provider`, `planner-model`, and `planner-effort`; the environment settings are `AI_UI_PLANNER_PROVIDER`, `AI_UI_PLANNER_MODEL`, and `AI_UI_PLANNER_EFFORT`. Explicit effort uses the provider's API field. Unset or `default` effort leaves the model's default intact. The adapter checks provider-level values; the selected model may support fewer levels and rejects unsupported requests without an automatic downgrade.
+
+OpenAI remains the compatibility default (`gpt-5-mini`), and `AI_UI_OPENAI_MODEL` remains a fallback on that path. Anthropic and compatible endpoints require an explicit model. See [planner configuration](docs/planner-configuration.md) for workflow examples, effort values, compatible endpoints, and verification boundaries.
 
 ## Planner Secrets
 
-The default scaffolded planner uses `OPENAI_API_KEY`. The API key belongs in the app repo workflow, not in `ios-ai-ui-check`. Model selection is passed through the provider-neutral `AI_UI_PLANNER_MODEL` environment variable.
+Keys belong in the app repository workflow or local environment. The generated planner reads `ANTHROPIC_API_KEY` for Anthropic and `OPENAI_API_KEY` for OpenAI. A provider-neutral `AI_UI_PLANNER_API_KEY` takes precedence. Compatible endpoints use only that explicit generic key, if one is needed.
 
-Pass it as an environment variable on the workflow step or job that uses the action. The planner command inherits that environment and can read the key directly.
-If you use the reusable workflow wrapper instead of the core action directly, pass the secret through `planner-api-key` and optionally change the exported environment variable name with `planner-api-key-env-name`.
-
-Example with OpenAI:
-
-```yaml
-- name: UI validation
-  uses: Kofiloski/ios-ai-ui-check@v0.5.0
-  with:
-    planner-command: ./scripts/plan-ai-ui-scenario.sh
-  env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-```
-
-The scaffolded setup expects `OPENAI_API_KEY` by default. If you replace the generated planner script with your own provider integration, common key names are:
-
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `GEMINI_API_KEY`
-
-The action does not read those keys itself. Only the app repo's `planner-command` script uses them. `OPENAI_API_KEY` is the default for the scaffolded planner; feel free to replace that planner with your own and use a different key name.
+The reusable workflow accepts `planner-api-key`. It exports the value as `AI_UI_PLANNER_API_KEY` and under `planner-api-key-env-name` (legacy default `OPENAI_API_KEY`), preserving existing custom planners. The action never reads vendor credentials itself. A checked-in scenario needs no model credential.
 
 ## Runner Contract
 
@@ -550,6 +555,6 @@ docs/
 
 ## Releases And Citation
 
-Use immutable semantic tags such as `v0.5.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
+Use immutable semantic tags such as `v0.6.0`, the moving compatibility tag `v0`, or a full commit SHA. See [docs/releases.md](docs/releases.md) for the release and scaffold-upgrade policy.
 
 The project is MIT licensed. If you reference it in research, documentation, or a tool catalog, use [`CITATION.cff`](CITATION.cff) for the current citation metadata.

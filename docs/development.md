@@ -122,3 +122,9 @@ Current coverage is aimed at the highest-drift surfaces:
 - planner failure summaries and PR comment rendering
 - artifact manifest generation
 - reusable-workflow contract forwarding
+
+## Planner adapters
+
+`scripts/ai_ui_planner.py` is copied as a managed scaffold file alongside `ai_ui_contract.py`. Keep provider transport and request/response handling there; prompt/source discovery stays in the generated app planner. Preserve the public executor's custom-command boundary. Read [planner configuration](planner-configuration.md) before changing effort mapping or credential forwarding.
+
+Provider selection is available from `v0.6.0`; consumers upgrading from `v0.5.0` or earlier need both the new action revision and an explicit scaffold refresh. Shared wire-schema/normalizer aliases preserve old OpenAI imports. Adapter tests use fixtures and a loopback HTTP server, and generated-script tests exercise both OpenAI and Anthropic without real API credentials. Live provider access and hosted workflow execution remain separate checks.

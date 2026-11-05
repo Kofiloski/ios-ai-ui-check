@@ -183,7 +183,7 @@ _STRICT_OPTIONAL_TIMEOUT_SCHEMA: dict[str, Any] = {
 # OpenAI strict structured outputs require every object property to be required
 # and every object to set additionalProperties to false. This wire schema is
 # deliberately separate from the provider-neutral runtime scenario schema.
-OPENAI_PLANNER_SCHEMA: dict[str, Any] = {
+PLANNER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["name", "description", "steps"],
@@ -238,6 +238,10 @@ OPENAI_PLANNER_SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+
+# Compatibility name for previously generated app planners.
+OPENAI_PLANNER_SCHEMA = PLANNER_SCHEMA
 
 
 class ScenarioContractError(ValueError):
@@ -940,11 +944,13 @@ def validate_scenario_payload(payload: dict[str, Any]) -> None:
             _validate_screenshot_output(output, step_index=index)
 
 
-def normalize_openai_planner_scenario(payload: dict[str, Any]) -> dict[str, Any]:
-    """Convert the strict OpenAI wire shape into the provider-neutral runtime shape."""
+def normalize_planner_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert the shared planner wire shape into the runtime scenario shape."""
 
     if not isinstance(payload, dict):
         raise ScenarioContractError("Planner payload must be a JSON object")
+    if set(payload) - {"name", "description", "steps"}:
+        raise ScenarioContractError("Planner payload contains unsupported fields")
 
     normalized: dict[str, Any] = {
         "name": payload.get("name"),
@@ -970,6 +976,8 @@ def normalize_openai_planner_scenario(payload: dict[str, Any]) -> dict[str, Any]
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             raise ScenarioContractError(f"Planner step {index} must be an object")
+        if set(step) - {"action", "environment", *optional_step_fields}:
+            raise ScenarioContractError(f"Planner step {index} contains unsupported fields")
 
         normalized_step: dict[str, Any] = {"action": step.get("action")}
         for key in optional_step_fields:
@@ -1006,6 +1014,10 @@ def normalize_openai_planner_scenario(payload: dict[str, Any]) -> dict[str, Any]
 
     validate_scenario_payload(normalized)
     return normalized
+
+
+# Compatibility name for previously generated app planners.
+normalize_openai_planner_scenario = normalize_planner_scenario
 
 
 def load_and_validate_scenario(path: Path) -> dict[str, Any]:

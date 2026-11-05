@@ -3,7 +3,7 @@
 > Provider-neutral GitHub Action and deterministic scaffold for running app-owned iOS Simulator UI scenarios, preserving review evidence, and maintaining one pull-request summary.
 
 Canonical repository: https://github.com/Kofiloski/ios-ai-ui-check
-Latest documented release: v0.5.0
+Latest documented release: v0.6.0
 License: MIT
 
 ## Use this project when
@@ -20,6 +20,7 @@ Do not put app-specific state seeding, credentials, deep links, accessibility ID
 
 - README.md: value proposition, first integration, evidence, and trust boundary.
 - skills/ios-ai-ui-check/SKILL.md: installable agent workflow for native local checks and reproducible CI adoption.
+- [Planner configuration](docs/planner-configuration.md): provider, model, effort, credentials, and source-version availability.
 - docs/native-xcode-checks.md: native tool discovery and evidence boundaries.
 - docs/adoption-checklist.md: minimum app-repo adoption checklist.
 - docs/architecture.md: public-action versus app-repo ownership.
@@ -38,7 +39,7 @@ Do not put app-specific state seeding, credentials, deep links, accessibility ID
 5. Preserve summary, scenario, media, logs, XCTest result bundles, and failure evidence.
 6. Write manifest.json, upload the artifact directory, and optionally update a managed PR comment.
 
-The checked-in scenario path does not invoke a model or require an API key. The public action never calls an AI provider directly. On the optional planning path, the app-owned planner command selects the provider and controls what context is sent. The generated scaffold includes an OpenAI-backed planner as a replaceable example.
+The checked-in scenario path does not invoke a model or require an API key. The public action never calls an AI provider directly. On the optional planning path, the app-owned planner command selects the provider and controls what context is sent. The source scaffold includes native Anthropic/OpenAI adapters and explicit compatible-endpoint support, with provider/model/effort selection. Provider/model/effort selection is available from v0.6.0; older app integrations need an explicit scaffold refresh and an updated action pin. Custom planner commands remain available.
 
 ## Scenario contract
 

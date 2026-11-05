@@ -102,7 +102,7 @@ Supported step shapes are:
 
 `wait_seconds` must also be finite and nonnegative. Every provided `timeout` must be finite and greater than zero.
 
-The scaffolded OpenAI planner uses a separate strict wire schema whose launch environment is an array of `{ "key", "value" }` entries. The planner normalizes and validates that response before writing the provider-neutral runtime scenario, so app-side runners continue to receive `environment` as a string-to-string JSON object.
+The scaffolded provider adapters use a shared strict wire schema whose launch environment is an array of `{ "key", "value" }` entries. Provider-specific wire-schema adaptations retain local constraint validation. The planner normalizes and validates that response before writing the provider-neutral runtime scenario, so app-side runners continue to receive `environment` as a string-to-string JSON object.
 
 ## Suggested Summary Format
 
@@ -117,3 +117,5 @@ Write `summary.md` in flat markdown. Example:
 ```
 
 If `AI_UI_PLANNER_GOAL` is set, it is reasonable to include a dedicated `Planner Goal` section or let the public action append one after runner execution.
+
+Provider, model, effort, and compatible-endpoint settings are passed through `AI_UI_PLANNER_PROVIDER`, `AI_UI_PLANNER_MODEL`, `AI_UI_PLANNER_EFFORT`, and `AI_UI_PLANNER_BASE_URL`. Custom planners own these settings; the public executor imposes no provider dependency. See [planner configuration](planner-configuration.md).

@@ -1,5 +1,5 @@
 name: iOS AI UI Check
-description: Run deterministic or AI-planned iOS Simulator UI checks with video, artifacts, and managed PR summaries.
+description: Run deterministic or Claude/OpenAI-planned iOS Simulator checks with XCTest evidence and managed PR summaries.
 author: Kristijan Kofiloski
 
 branding:
@@ -21,6 +21,22 @@ inputs:
     default: ""
   planner-command:
     description: Command that writes scenario JSON to AI_UI_SCENARIO_OUTPUT_PATH when no provided scenario is set.
+    required: false
+    default: ""
+  planner-provider:
+    description: Optional provider forwarded to the app-owned planner (openai, anthropic, or openai-compatible in the scaffold).
+    required: false
+    default: ""
+  planner-model:
+    description: Optional model ID forwarded to the app-owned planner.
+    required: false
+    default: ""
+  planner-effort:
+    description: Optional reasoning effort forwarded unchanged to the app-owned planner.
+    required: false
+    default: ""
+  planner-base-url:
+    description: Optional API base URL for the scaffolded openai-compatible planner.
     required: false
     default: ""
   planner-goal:
@@ -140,6 +156,10 @@ runs:
         RUNNER_SCRIPT: ./scripts/run-ai-ui-scenario.sh
         PROVIDED_SCENARIO_PATH: ${{ inputs.provided-scenario-path }}
         PLANNER_COMMAND: ${{ inputs.planner-command }}
+        PLANNER_PROVIDER: ${{ inputs.planner-provider }}
+        PLANNER_MODEL: ${{ inputs.planner-model }}
+        PLANNER_EFFORT: ${{ inputs.planner-effort }}
+        PLANNER_BASE_URL: ${{ inputs.planner-base-url }}
         PLANNER_GOAL: ${{ inputs.planner-goal }}
         BASE_REF: ${{ inputs.base-ref }}
         HEAD_REF: ${{ inputs.head-ref }}

@@ -14,10 +14,29 @@ on:
         required: false
         default: __SIMULATOR_RUNTIME_YAML__
         type: string
-      planner_model:
-        description: Model used by the generated planner script. The scaffolded planner defaults to OpenAI, but app repos can replace it with any provider.
+      planner_provider:
+        description: Provider used by the generated planner.
         required: false
-        default: gpt-5-mini
+        default: openai
+        type: choice
+        options:
+          - openai
+          - anthropic
+          - openai-compatible
+      planner_model:
+        description: Model ID. Required for Anthropic or compatible endpoints; OpenAI defaults to gpt-5-mini.
+        required: false
+        default: ""
+        type: string
+      planner_effort:
+        description: Effort level supported by the selected model, or default.
+        required: false
+        default: default
+        type: string
+      planner_base_url:
+        description: API base URL for openai-compatible, including /v1.
+        required: false
+        default: ""
         type: string
       planner_goal:
         description: Optional short sentence describing what flow the planner should verify.
@@ -134,10 +153,15 @@ jobs:
         uses: ./_ios-ai-ui-check
         with:
           planner-command: ./scripts/plan-ai-ui-scenario.sh
+          planner-provider: ${{ inputs.planner_provider || vars.AI_UI_PLANNER_PROVIDER || 'openai' }}
+          planner-model: ${{ inputs.planner_model || vars.AI_UI_PLANNER_MODEL || '' }}
+          planner-effort: ${{ inputs.planner_effort || vars.AI_UI_PLANNER_EFFORT || 'default' }}
+          planner-base-url: ${{ inputs.planner_base_url || vars.AI_UI_PLANNER_BASE_URL || '' }}
           planner-goal: ${{ github.event_name == 'workflow_dispatch' && inputs.planner_goal || github.event_name == 'pull_request' && 'Verify the most likely user-visible flow affected by this PR.' || '' }}
           simulator-name: __SIMULATOR_NAME_EXPRESSION_YAML__
           simulator-runtime: __SIMULATOR_RUNTIME_EXPRESSION_YAML__
         env:
           AI_UI_DERIVED_DATA_PATH: ${{ github.workspace }}/.derivedData/ci
-          AI_UI_PLANNER_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.planner_model || 'gpt-5-mini' }}
+          AI_UI_PLANNER_API_KEY: ${{ secrets.AI_UI_PLANNER_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 
@@ -13,6 +18,7 @@ class ReusableWorkflowContractTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
         self.assertIn("planner-api-key-env-name:", workflow_text)
+        self.assertIn('dict.fromkeys((name, "AI_UI_PLANNER_API_KEY"))', workflow_text)
         self.assertIn("planner-api-key:", workflow_text)
         self.assertIn("id: run_action", workflow_text)
         self.assertIn("artifact-manifest-path:", workflow_text)
@@ -21,7 +27,7 @@ class ReusableWorkflowContractTests(unittest.TestCase):
         self.assertIn("upload-artifacts:", workflow_text)
         self.assertIn("record-video:", workflow_text)
         self.assertIn("max-duration-seconds:", workflow_text)
-        for name in ("base-ref", "head-ref", "release-notes-path"):
+        for name in ("base-ref", "head-ref", "release-notes-path", "planner-provider", "planner-model", "planner-effort", "planner-base-url"):
             self.assertIn(f"{name}: ${{{{ inputs.{name} }}}}", workflow_text)
         self.assertIn("github-token: ${{ secrets['github-token'] }}", workflow_text)
         self.assertIn("comment-author-login: ${{ inputs.comment-author-login }}", workflow_text)
@@ -76,6 +82,21 @@ class ReusableWorkflowContractTests(unittest.TestCase):
             if line.lstrip().startswith("if:"):
                 self.assertNotIn("secrets", line)
         self.assertIn('if [[ -z "${PLANNER_API_KEY}" ]]', workflow_text)
+
+    def test_planner_secret_preserves_legacy_name_and_exports_generic_key(self) -> None:
+        workflow = WORKFLOW_PATH.read_text()
+        step = workflow.split("- name: Export planner API key", 1)[1]
+        script = textwrap.dedent(step.split("python3 - <<'PY'", 1)[1].split("\n          PY", 1)[0])
+        for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AI_UI_PLANNER_API_KEY"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp) / "github-env"
+                key = "fixture-line-one\nfixture-line-two"
+                subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True,
+                               env={**os.environ, "PLANNER_API_KEY_ENV_NAME": name, "PLANNER_API_KEY": key, "GITHUB_ENV": str(target)})
+                exported = target.read_text()
+                for expected in {name, "AI_UI_PLANNER_API_KEY"}:
+                    self.assertEqual(exported.count(expected + "<<"), 1)
+                self.assertIn(key, exported)
 
 
 if __name__ == "__main__":

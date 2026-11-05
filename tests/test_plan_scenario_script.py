@@ -141,6 +141,31 @@ EOF
             self.assertIn("Planner validation error", summary)
             self.assertIn("unsupported fields", planner_validation_error)
 
+    def test_explicit_planner_settings_reach_custom_command_and_request_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = root / "artifacts"
+            planner_script = root / "planner.sh"
+            planner_script.write_text('''#!/bin/bash
+set -eu
+printf '%s\\n' "$AI_UI_PLANNER_PROVIDER" "$AI_UI_PLANNER_MODEL" "$AI_UI_PLANNER_EFFORT" > "$AI_UI_SCENARIO_OUTPUT_PATH.selection"
+printf '%s\\n' '{"name":"Fixture","steps":[{"action":"wait","seconds":0}]}' > "$AI_UI_SCENARIO_OUTPUT_PATH"
+''')
+            planner_script.chmod(0o755)
+            self.run_plan_script({
+                "ACTION_ROOT": str(REPO_ROOT), "ARTIFACTS_DIR": str(artifacts),
+                "PLANNER_COMMAND": str(planner_script), "RUNNER_SCRIPT": str(root / "missing-runner"),
+                "GITHUB_OUTPUT": str(root / "outputs"),
+                "PLANNER_PROVIDER": "anthropic", "PLANNER_MODEL": "claude-sonnet-4-6", "PLANNER_EFFORT": "high",
+                "AI_UI_PLANNER_PROVIDER": "old-provider", "AI_UI_PLANNER_MODEL": "old-model", "AI_UI_PLANNER_EFFORT": "low",
+            })
+            self.assertEqual((artifacts / "scenario.json.selection").read_text().splitlines(), ["anthropic", "claude-sonnet-4-6", "high"])
+            self.assertIn("status=passed", (root / "outputs").read_text())
+            request = (artifacts / "planner-request.md").read_text()
+            self.assertIn("Requested provider: anthropic", request)
+            self.assertIn("Requested model: claude-sonnet-4-6", request)
+            self.assertIn("Requested effort: high", request)
+
 
 if __name__ == "__main__":
     unittest.main()

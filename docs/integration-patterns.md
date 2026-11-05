@@ -10,7 +10,7 @@ read_when:
 
 `ios-ai-ui-check` can be integrated in a few different ways depending on how much coverage and enforcement you want.
 
-The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.3.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
+The examples below use the immutable `Kofiloski/ios-ai-ui-check@v0.6.0` release. Pin to a full commit SHA instead when your dependency policy requires it.
 
 ## 1. Generated Manual + PR Workflow
 
@@ -34,10 +34,20 @@ on:
         required: false
         default: "26.2"
         type: string
-      planner_model:
-        description: Model used by the generated planner script. The scaffolded planner defaults to OpenAI, but app repos can replace it with any provider.
+      planner_provider:
+        description: Planner provider.
         required: false
-        default: gpt-5-mini
+        default: openai
+        type: string
+      planner_effort:
+        description: Effort supported by the selected model, or default.
+        required: false
+        default: default
+        type: string
+      planner_model:
+        description: Model ID. Required for Anthropic or compatible endpoints; OpenAI defaults to gpt-5-mini.
+        required: false
+        default: ""
         type: string
       planner_goal:
         description: Optional short sentence describing what flow the planner should verify.
@@ -55,7 +65,7 @@ jobs:
 ```
 
 The generated workflow defaults to AI planning through `./scripts/plan-ai-ui-scenario.sh`.
-The generated workflow exposes `planner_goal` plus the technical overrides `simulator_name`, `simulator_runtime`, and `planner_model`.
+The generated workflow exposes `planner_goal`, `simulator_name`, `simulator_runtime`, `planner_provider`, `planner_model`, `planner_effort`, and optional `planner_base_url`. See [planner configuration](planner-configuration.md) for the provider-specific credentials and supported values.
 Maintainers can use `planner_goal` for a sentence-level request such as `test adding an ingredient` or `verify the main ordering flow`.
 On pull requests, the generated workflow is opt-in through the `ai-ui-check` label and defaults the planner goal to `Verify the most likely user-visible flow affected by this PR.`
 Advanced overrides such as a checked-in scenario path and expected screenshot path still exist at the action level. The scaffolded workflow keeps those out of the manual GitHub form on purpose. If you need that level of control, edit the workflow YAML directly or build a dedicated wrapper workflow.
@@ -85,7 +95,7 @@ Best use:
 
 If your published `ios-ai-ui-check` repo is private, add an `ACTION_REPO_TOKEN` repository secret in the app repo. The generated workflow uses that secret for the secondary checkout and falls back to `github.token` when the action repo is public.
 
-If you use the scaffolded planner, also add `OPENAI_API_KEY` in the app repo.
+Add `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the provider-neutral `AI_UI_PLANNER_API_KEY` for the selected provider; see [planner configuration](planner-configuration.md).
 For pull requests from forks, GitHub does not expose repository secrets to `pull_request` workflows. AI-planned PR runs therefore require a maintainer-owned branch, another credential strategy, or a deterministic checked-in scenario instead.
 
 If the app has multiple startup states, fill in `.github/ai-ui/planner-context.md` with the exact launch flags or environment values that force the intended one. The scaffolded planner is intentionally conservative when that guidance is missing.
@@ -132,7 +142,7 @@ jobs:
             -derivedDataPath .derivedData/ci
 
       - name: Run AI UI action
-        uses: Kofiloski/ios-ai-ui-check@v0.3.0
+        uses: Kofiloski/ios-ai-ui-check@v0.6.0
         with:
           planner-command: ./scripts/plan-ai-ui-scenario.sh
           planner-goal: Verify the most likely user-visible flow affected by this PR.
@@ -201,7 +211,7 @@ jobs:
             -only-testing:AppTests
 
       - name: Run AI UI action
-        uses: Kofiloski/ios-ai-ui-check@v0.3.0
+        uses: Kofiloski/ios-ai-ui-check@v0.6.0
         with:
           planner-command: ./scripts/plan-ai-ui-scenario.sh
           planner-goal: Verify the most likely user-visible flow affected by this PR.
@@ -236,6 +246,8 @@ This is useful when:
 
 The reusable workflow now forwards the same outputs as the core action, including `artifact-manifest-path`.
 It also exposes the operational inputs that the core action already supports, such as artifact directory, artifact upload toggle, video toggle, and timeout.
+Since `v0.6.0`, the wrapper forwards `planner-provider`, `planner-model`, `planner-effort`, and `planner-base-url` and exports the supplied key under `AI_UI_PLANNER_API_KEY` as well as its legacy/custom name. Explicitly refresh older app scaffolds before adopting these settings.
+
 For AI-planned flows, it provides a provider-agnostic secret pass-through using `planner-api-key` plus `planner-api-key-env-name`, so callers do not need to hard-code `OPENAI_API_KEY` into the reusable workflow itself.
 
 ## Choosing Between Them
