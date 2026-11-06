@@ -399,7 +399,8 @@ private struct UIInspector {
         attachment.lifetime = .keepAlways
         testCase.add(attachment)
 
-        let beforePlanningScreenshotPath = environment["AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH"] ?? environment["AI_UI_CURRENT_SCREENSHOT_PATH"]
+        let beforePlanningScreenshotPath = environment["AI_UI_BEFORE_PLANNING_SCREENSHOT_PATH"]
+            ?? environment["AI_UI_CURRENT_SCREENSHOT_PATH"]
         if let screenshotPath = beforePlanningScreenshotPath, screenshotPath.isEmpty == false {
             let outputURL = URL(fileURLWithPath: screenshotPath)
             try FileManager.default.createDirectory(
@@ -410,7 +411,8 @@ private struct UIInspector {
             try screenshot.pngRepresentation.write(to: outputURL)
         }
 
-        let beforePlanningTreePath = environment["AI_UI_BEFORE_PLANNING_UI_TREE_PATH"] ?? environment["AI_UI_CURRENT_UI_TREE_PATH"]
+        let beforePlanningTreePath = environment["AI_UI_BEFORE_PLANNING_UI_TREE_PATH"]
+            ?? environment["AI_UI_CURRENT_UI_TREE_PATH"]
         if let treePath = beforePlanningTreePath, treePath.isEmpty == false {
             let snapshot = UISnapshot(app: app)
             let encoder = JSONEncoder()

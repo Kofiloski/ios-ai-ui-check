@@ -81,6 +81,7 @@ The public action delegates model calls to the app-owned planner. Review what so
 | Scaffold or refresh an app | [Setup and upgrades](docs/getting-started.md) |
 | Inputs, outputs, and scenario JSON | [Action reference](docs/action-reference.md) |
 | PR, release-comparison, or existing-CI workflows | [Integration patterns](docs/integration-patterns.md) |
+| Generate new tests from upstream releases and retain history | [Release regression workflow](docs/release-regressions.md) (unreleased; pin a reviewed commit) |
 | Implement an app runner | [Runner contract](docs/runner-contract.md) |
 | Find artifacts and interpret results | [Artifact manifest](docs/artifact-manifest.md) |
 | Understand ownership and execution | [Architecture](docs/architecture.md) |

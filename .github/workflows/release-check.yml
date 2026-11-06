@@ -1,0 +1,286 @@
+name: Release regression pipeline
+
+on:
+  workflow_call:
+    inputs:
+      action-ref:
+        type: string
+        required: true
+      profile:
+        type: string
+        default: .github/ai-ui/release-profile.json
+      head-tag:
+        type: string
+        default: ""
+      base-tag:
+        type: string
+        default: ""
+      force:
+        type: boolean
+        default: false
+      provider:
+        type: string
+        default: anthropic
+      model:
+        type: string
+        default: claude-sonnet-4-6
+      effort:
+        type: string
+        default: high
+      base-url:
+        type: string
+        default: ""
+    secrets:
+      planner-api-key:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-regression-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_ACTION_SHA: ${{ inputs.action-ref }}
+  RELEASE_PROFILE: ${{ inputs.profile }}
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+      credentials: ${{ steps.credentials.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Kofiloski/ios-ai-ui-check
+          ref: ${{ inputs.action-ref }}
+          path: .tooling
+          persist-credentials: false
+      - name: Resolve immutable upstream release pair
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_HEAD_TAG: ${{ inputs.head-tag }}
+          RELEASE_BASE_TAG: ${{ inputs.base-tag }}
+          RELEASE_FORCE: ${{ inputs.force }}
+        run: |
+          test "$(git -C .tooling rev-parse HEAD)" = "$RELEASE_ACTION_SHA"
+          python3 .tooling/scripts/release-check.py discover --profile "$RELEASE_PROFILE" --directory discovery
+      - name: Check provider configuration before spending macOS time
+        id: credentials
+        env:
+          AI_UI_PLANNER_API_KEY: ${{ secrets.planner-api-key }}
+          AI_UI_PLANNER_PROVIDER: ${{ inputs.provider }}
+          AI_UI_PLANNER_MODEL: ${{ inputs.model }}
+          AI_UI_PLANNER_EFFORT: ${{ inputs.effort }}
+          AI_UI_PLANNER_BASE_URL: ${{ inputs.base-url }}
+        run: |
+          if python3 .tooling/scripts/ai_ui_planner.py; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Live planning is blocked. No baseline fallback will be used.'
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-discovery
+          path: discovery
+
+  build-inspect:
+    needs: discover
+    if: needs.discover.outputs.run == 'true' && needs.discover.outputs.credentials == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      AI_UI_DERIVED_DATA_PATH: ${{ github.workspace }}/.derivedData/ai-ui
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Kofiloski/ios-ai-ui-check
+          ref: ${{ inputs.action-ref }}
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-discovery
+          path: discovery
+      - name: Apply only the app harness to the compared head
+        run: python3 .tooling/scripts/release-check.py prepare --profile "$RELEASE_PROFILE" --input discovery/discovery.json --directory release-input
+      - name: Build and inspect the real app without provider credentials
+        run: python3 .tooling/scripts/release-check.py build-inspect --profile "$RELEASE_PROFILE" --directory release-input
+      - name: Preserve relocatable test products
+        run: python3 .tooling/scripts/release-check.py pack --input .derivedData/ai-ui/Build/Products --directory products
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: release-input
+          path: release-input
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-products
+          path: products/products.tar.gz
+          retention-days: 3
+
+  plan:
+    needs: build-inspect
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Kofiloski/ios-ai-ui-check
+          ref: ${{ inputs.action-ref }}
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-input
+          path: release-input
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-discovery
+          path: discovery
+      - name: Generate new diff-bound UI scenarios
+        id: generate
+        env:
+          AI_UI_PLANNER_API_KEY: ${{ secrets.planner-api-key }}
+          AI_UI_PLANNER_PROVIDER: ${{ inputs.provider }}
+          AI_UI_PLANNER_MODEL: ${{ inputs.model }}
+          AI_UI_PLANNER_EFFORT: ${{ inputs.effort }}
+          AI_UI_PLANNER_BASE_URL: ${{ inputs.base-url }}
+        run: python3 .tooling/scripts/release-check.py plan --profile "$RELEASE_PROFILE" --input release-input --discovery discovery/discovery.json --directory release-plan
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: release-plan
+          path: release-plan
+
+  execute:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.matrix != ''
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: xcode-27
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      AI_UI_DERIVED_DATA_PATH: ${{ github.workspace }}/.derivedData/ai-ui
+      CASE_ID: ${{ matrix.id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Kofiloski/ios-ai-ui-check
+          ref: ${{ inputs.action-ref }}
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-discovery
+          path: discovery
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-plan
+          path: release-plan
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-products
+          path: products
+      - run: python3 .tooling/scripts/release-check.py prepare --profile "$RELEASE_PROFILE" --input discovery/discovery.json --directory release-input
+      - run: python3 .tooling/scripts/release-check.py unpack --input products/products.tar.gz --directory .derivedData/ai-ui/Build
+      - name: Configure native execution
+        run: python3 .tooling/scripts/release-check.py environment --profile "$RELEASE_PROFILE"
+      - name: Execute the newly generated scenario through our action
+        uses: ./.tooling
+        with:
+          provided-scenario-path: release-plan/scenarios/${{ matrix.id }}.json
+          base-ref: ${{ env.RELEASE_BASE_SHA }}
+          head-ref: ${{ env.RELEASE_HEAD_SHA }}
+          release-notes-path: release-input/release-notes.md
+          artifacts-dir: release-results/${{ matrix.id }}
+          upload-artifacts: "false"
+          comment-on-pr: "false"
+          simulator-name: ${{ env.AI_UI_SIMULATOR_NAME }}
+          simulator-runtime: ${{ env.AI_UI_SIMULATOR_RUNTIME }}
+          max-duration-seconds: "600"
+        env:
+          RUNNER_SCRIPT: ./scripts/run-release-ui-scenario.sh
+      - name: Verify actual unskipped XCTest execution
+        if: always()
+        run: python3 .tooling/scripts/release-check.py case-result --case-id "$CASE_ID" --directory "release-results/$CASE_ID"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: release-case-${{ matrix.id }}
+          path: release-results
+
+  history:
+    needs: [discover, build-inspect, plan, execute]
+    if: always() && needs.discover.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: Kofiloski/ios-ai-ui-check
+          ref: ${{ inputs.action-ref }}
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-discovery
+          path: history/release-discovery
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: release-input
+          path: history/release-input
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: release-plan
+          path: history/release-plan
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: release-case-*
+          path: history
+      - name: Produce scoped per-release report
+        env:
+          RELEASE_JOB_RESULTS: ${{ toJSON(needs) }}
+          RELEASE_PLANNER_PROVIDER: ${{ inputs.provider }}
+          RELEASE_PLANNER_MODEL: ${{ inputs.model }}
+          RELEASE_PLANNER_EFFORT: ${{ inputs.effort }}
+        run: python3 .tooling/scripts/release-check.py report --input history/release-discovery/discovery.json --directory history
+      - name: Archive immutable report and evidence on this fork
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .tooling/scripts/release-check.py publish --directory history
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: release-report
+          path: history
+      - name: Fail incomplete or failing coverage
+        run: python3 -c 'import json; import sys; sys.exit(0 if json.load(open("history/report.json"))["status"] == "passed" else 1)'

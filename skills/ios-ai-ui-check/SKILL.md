@@ -17,6 +17,7 @@ Use Xcode's native Simulator controls for focused local verification and the pub
    - Prefer a checked-in scenario for required or security-sensitive CI.
    - Use a planner goal when exploratory coverage is useful and the app repo can explicitly control the context sent to its chosen provider. Respect the requested provider, model, and effort; check the installed planner/action supports those options. Anthropic uses its native adapter when available. Read the planner settings section in `references/adoption.md` before changing credentials or configuration.
    - When repeatable regression coverage is requested, preserve the observed path and expectations in the app's existing XCUITest or scenario contract, then replay through that runner.
+   - For new tests generated from a previous/new release diff, read [references/release-regressions.md](references/release-regressions.md). Keep fixed baseline execution, generated coverage and historical publication as separate evidence.
 3. For CI integration, read `references/adoption.md` before scaffolding or editing a workflow. The remaining integration steps apply to deterministic and planner modes.
 4. Pin the public action to a release tag or commit SHA. Do not track `main` in stable CI.
 5. Reuse existing focused app-owned tests and runners where they satisfy the requested behavior. When a new integration needs the upstream scaffold, run its dry-run first, review the proposed files, then generate them only within the target app repo.
