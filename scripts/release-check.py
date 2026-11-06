@@ -296,6 +296,14 @@ def verify_plan_inputs(root, config, discovery, input_dir):
     expected = hashlib.sha256(actual.encode()).hexdigest()
     if context['diff_sha256'] != expected or (input_dir / 'change.diff').read_text() != actual:
         raise ValueError('Comparison artifact does not match the immutable upstream diff')
+    files = git(root, 'diff', '--name-only', '-z', discovery['base']['sha'],
+                discovery['head']['sha'], '--').rstrip('\0').split('\0') if actual else []
+    if context['changed_files'] != files:
+        raise ValueError('Changed-file inventory does not match the immutable upstream diff')
+    if (not isinstance(context['diff_limit'], int) or not 0 < context['diff_limit'] <= 20000
+            or context['diff_characters'] != len(actual)
+            or context['diff_truncated'] != (len(actual) > context['diff_limit'])):
+        raise ValueError('Invalid bounded diff metadata')
     if context['diff'] != actual[:context['diff_limit']]:
         raise ValueError('Planner excerpt does not match the complete diff')
 

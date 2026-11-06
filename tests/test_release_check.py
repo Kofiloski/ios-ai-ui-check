@@ -240,6 +240,12 @@ class ReleaseTests(unittest.TestCase):
             original = release.git
             with patch.object(release, 'git', side_effect=lambda path, *a, **kw: '' if a[0] == 'fetch' else original(path, *a, **kw)):
                 release.verify_plan_inputs(root, config, selection, Path(tmp) / 'evidence')
+                value['changed_files'] = ['invented.swift']
+                release.write_json(Path(tmp) / 'evidence/change-context.json', value)
+                with self.assertRaisesRegex(ValueError, 'Changed-file inventory'):
+                    release.verify_plan_inputs(root, config, selection, Path(tmp) / 'evidence')
+                value['changed_files'] = ['Settings.swift']
+                release.write_json(Path(tmp) / 'evidence/change-context.json', value)
                 (Path(tmp) / 'evidence/change.diff').write_text('tampered diff')
                 with self.assertRaisesRegex(ValueError, 'immutable upstream diff'):
                     release.verify_plan_inputs(root, config, selection, Path(tmp) / 'evidence')
