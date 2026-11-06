@@ -9,6 +9,8 @@ Run app-owned XCUITest flows on iOS Simulator and give pull requests reviewable 
 
 Use a checked-in scenario for deterministic CI, or an optional planner with explicit **provider, model, and effort**. Native Anthropic and OpenAI planners and configurable OpenAI-compatible endpoints are supported. The app repository owns launch state, fixtures, identifiers, and assertions.
 
+Verified native examples: [Proton Pass](https://github.com/Kofiloski/ios-pass), [Firefox](https://github.com/Kofiloski/firefox-ios), and [DuckDuckGo](https://github.com/Kofiloski/apple-browsers). Each fork links a passing provided-scenario run and its coverage limits.
+
 ## Quick start
 
 From an app repository with a buildable `.xcodeproj`, shared scheme, and available Simulator:
