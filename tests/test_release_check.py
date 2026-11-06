@@ -219,6 +219,7 @@ class ReleaseTests(unittest.TestCase):
             git('config', 'user.email', 'fixture@example.invalid')
             file = root / 'Settings.swift'
             file.write_text('old setting\n')
+            (root / 'Project.pbxproj').write_text('upstream project\n')
             git('add', '.')
             git('commit', '-qm', 'base')
             base = git('rev-parse', 'HEAD')
@@ -226,9 +227,10 @@ class ReleaseTests(unittest.TestCase):
             git('commit', '-qam', 'head')
             head = git('rev-parse', 'HEAD')
             (root / 'runner.sh').write_text('native harness\n')
+            (root / 'Project.pbxproj').write_text('snapshot-specific project preparation\n')
             git('add', '.')
             git('commit', '-qm', 'harness')
-            config = dict(self.config, source_seed=head)
+            config = dict(self.config, source_seed=head, harness_excludes=['Project.pbxproj'])
             selection = dict(base=dict(sha=base), head=dict(sha=head), release_notes='', notes_source='unavailable')
             original = release.git
             with patch.object(release, 'git', side_effect=lambda path, *a, **kw: '' if a[0] == 'fetch' else original(path, *a, **kw)):
@@ -236,6 +238,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(git('rev-parse', 'HEAD'), head)
             self.assertEqual(value['changed_files'], ['Settings.swift'])
             self.assertTrue((root / 'runner.sh').exists())
+            self.assertEqual((root / 'Project.pbxproj').read_text(), 'upstream project\n')
+            self.assertEqual(value['harness_excludes'], ['Project.pbxproj'])
             self.assertEqual(value['notes_source'], 'unavailable')
             original = release.git
             with patch.object(release, 'git', side_effect=lambda path, *a, **kw: '' if a[0] == 'fetch' else original(path, *a, **kw)):
@@ -294,6 +298,15 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn('secrets.', section)
             if job != 'history':
                 self.assertNotIn('contents: write', section)
+
+    def test_profile_rejects_unsafe_harness_exclusions(self):
+        value = dict(self.config, source_seed='1' * 40, project='App.xcodeproj', runner='scripts/runner.sh')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'profile.json'
+            for invalid in ['not-an-array', ['../outside'], ['/absolute'], ['.'], ['']]:
+                release.write_json(path, dict(value, harness_excludes=invalid))
+                with self.assertRaisesRegex(ValueError, 'harness_excludes'):
+                    release.profile(path)
 
 
 if __name__ == '__main__':

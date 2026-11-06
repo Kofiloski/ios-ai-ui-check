@@ -113,6 +113,11 @@ def profile(path):
         p = Path(value[field])
         if p.is_absolute() or '..' in p.parts:
             raise ValueError(f'{field} must be inside the app repository')
+    if not isinstance(value.get('harness_excludes', []), list):
+        raise ValueError('harness_excludes must be a list of explicit app-owned preparation paths')
+    for path in value.get('harness_excludes', []):
+        if not isinstance(path, str) or not path or Path(path).is_absolute() or '..' in Path(path).parts or path == '.':
+            raise ValueError('harness_excludes paths must be inside the app repository')
     if not 1 <= value.get('max_tests', 3) <= 5:
         raise ValueError('max_tests must be 1..5')
     return value
@@ -223,7 +228,8 @@ def prepare(root, config, discovery, output):
     for sha in (config['source_seed'], discovery['base']['sha'], discovery['head']['sha']):
         git(root, 'fetch', '--no-tags', '--depth=1', f'https://github.com/{config["upstream"]}.git', sha)
     patch = git(root, 'diff', '--binary', config['source_seed'], harness, '--', '.',
-                ':!README.md', ':!docs', ':!.github/workflows', binary=True)
+                ':!README.md', ':!docs', ':!.github/workflows',
+                *(':(exclude,literal)' + p for p in config.get('harness_excludes', [])), binary=True)
     (output / 'harness.patch').write_bytes(patch)
     git(root, 'checkout', '--detach', discovery['head']['sha'])
     subprocess.run(['git', '-C', str(root), 'apply', '--check', '-'], input=patch, check=True)
@@ -238,7 +244,7 @@ def prepare(root, config, discovery, output):
         head_ref=discovery['head']['sha'], release_notes_path=notes_path)
     (output / 'change.diff').write_text(context.pop('_full_diff'))
     context.update(harness_sha=harness, action_sha=os.environ.get('RELEASE_ACTION_SHA', ''),
-                   notes_source=discovery['notes_source'])
+                   notes_source=discovery['notes_source'], harness_excludes=config.get('harness_excludes', []))
     write_json(output / 'change-context.json', context)
     return context
 

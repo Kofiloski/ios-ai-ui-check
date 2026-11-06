@@ -47,6 +47,15 @@ commit if an older/newer release is incompatible. Such attempts are blocked and
 retained. Historical replays require compatible Xcode, dependencies and harness
 configuration, not just an available Git tag.
 
+An app can list explicit relative `harness_excludes` paths when snapshot-specific
+patch context is unsuitable and prepare those paths with its reviewed
+`prepare_commands` instead. These exclusions are retained in the comparison
+evidence. DuckDuckGo uses this for its reordered PBX project: its app-owned helper
+removes only private-font objects and adds two Debug Simulator extension IDs,
+then compares the entire parsed project against those exact expected changes.
+Unrelated upstream settings must remain intact; excluding a failing patch alone
+does not establish a compatible harness.
+
 ## Provider and scheduling
 
 Set the selected provider's API key as a repository secret. The caller supports
