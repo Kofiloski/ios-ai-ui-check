@@ -40,6 +40,34 @@ class API:
         return asset['value']
 
 
+class Publisher:
+    def __init__(self):
+        self.releases = {}
+        self.uploads = []
+        self.updates = []
+
+    def get(self, path):
+        return self.releases.get(path.rsplit('/', 1)[-1])
+
+    def request(self, path, data, method, content_type=None):
+        if method == 'PATCH':
+            destination = next(value for value in self.releases.values()
+                               if str(value['id']) == path.rsplit('/', 1)[-1])
+            destination.update(data)
+            self.updates.append(data)
+            return destination, ''
+        if path.endswith('/releases'):
+            value = dict(id=len(self.releases) + 1, body=data['body'], assets=[],
+                         upload_url='https://uploads.github.com/' + data['tag_name'] + '{?name}')
+            self.releases[data['tag_name']] = value
+            return value, ''
+        name = release.urllib.parse.parse_qs(release.urllib.parse.urlsplit(path).query)['name'][0]
+        self.uploads.append((name, data.read_bytes()))
+        destination = self.releases[release.urllib.parse.urlsplit(path).path.lstrip('/')]
+        destination['assets'].append(dict(name=name))
+        return dict(name=name), ''
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.config = dict(upstream='owner/app', tag_pattern=r'^(\d+)\.(\d+)\.(\d+)$',
@@ -96,6 +124,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(release.discover(API(self.tags, state), self.config, 'me/fork', force=True)['run'])
         with self.assertRaises(ValueError):
             release.discover(API(self.tags), self.config, 'me/fork', head_tag='unknown')
+
+    def test_force_latest_does_not_consume_an_older_pending_release(self):
+        state = dict(seen=dict(self.tags), pending=['1.1.0'])
+        value = release.discover(API(self.tags, state), self.config, 'me/fork', force=True)
+        self.assertEqual(value['head']['tag'], '1.2.0')
+        self.assertEqual(value['state']['pending'], ['1.1.0'])
+        explicit = release.discover(API(self.tags, state), self.config, 'me/fork', force=True, head_tag='1.1.0')
+        self.assertEqual(explicit['head']['tag'], '1.1.0')
 
     def suite(self):
         return dict(tests=[dict(id='changed-setting', claim='Changed setting is exposed', files=['Settings.swift'],
@@ -255,22 +291,6 @@ class ReleaseTests(unittest.TestCase):
                     release.verify_plan_inputs(root, config, selection, Path(tmp) / 'evidence')
 
     def test_publish_retains_attempts_and_advances_blocked_queue_after_uploads(self):
-        class Publisher:
-            def __init__(self):
-                self.releases = {}
-                self.uploads = []
-            def get(self, path):
-                return self.releases.get(path.rsplit('/', 1)[-1])
-            def request(self, path, data, method, content_type=None):
-                if path.endswith('/releases'):
-                    value = dict(assets=[], upload_url='https://uploads.github.com/' + data['tag_name'] + '{?name}')
-                    self.releases[data['tag_name']] = value
-                    return value, ''
-                name = release.urllib.parse.parse_qs(release.urllib.parse.urlsplit(path).query)['name'][0]
-                self.uploads.append((name, data.read_bytes()))
-                destination = self.releases[release.urllib.parse.urlsplit(path).path.lstrip('/')]
-                destination['assets'].append(dict(name=name))
-                return dict(name=name), ''
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
             'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2', 'GITHUB_SHA': '4' * 40,
         }):
@@ -288,6 +308,49 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(json.loads(api.uploads[-1][1])['pending'], ['1.2.0'])
             release.publish(api, 'me/fork', result, path)
             self.assertEqual(len(api.uploads), 4, 'An existing attempt must not be overwritten')
+
+    def test_retry_updates_visible_summary_without_overwriting_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'GITHUB_RUN_ID': '123', 'GITHUB_SHA': '4' * 40,
+        }):
+            path = Path(tmp) / 'history'
+            path.mkdir()
+            api = Publisher()
+            for attempt, status in enumerate(('blocked', 'passed', 'failed'), 1):
+                selection = dict(report_tag='ui-check-abc', head=dict(tag='1.1.0'),
+                                 state=dict(seen=dict(self.tags), pending=['1.1.0']))
+                result = dict(status=status, comparison=selection)
+                release.write_json(path / 'report.json', result)
+                (path / 'report.md').write_text('Result: ' + status)
+                with patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': str(attempt)}):
+                    release.publish(api, 'me/fork', result, path)
+                body = api.releases['ui-check-abc']['body']
+                self.assertIn('Result: ' + status, body)
+                self.assertIn(f'report-123-{attempt}.json', body)
+            names = [name for name, _ in api.uploads]
+            self.assertEqual(len(names), len(set(names)))
+            self.assertEqual(len([name for name in names if name.startswith('report-')]), 6)
+
+    def test_summary_is_not_refreshed_until_attempt_evidence_is_uploaded(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': '4' * 40,
+        }):
+            path = Path(tmp) / 'history'
+            path.mkdir()
+            selection = dict(report_tag='ui-check-abc', head=dict(tag='1.1.0'),
+                             state=dict(seen=dict(self.tags), pending=['1.1.0']))
+            result = dict(status='passed', comparison=selection)
+            release.write_json(path / 'report.json', result)
+            (path / 'report.md').write_text('Result: passed')
+            api = Publisher()
+            api.releases['ui-check-abc'] = dict(id=1, body='Result: blocked', assets=[],
+                upload_url='https://uploads.github.com/ui-check-abc{?name}')
+            with patch.object(api, 'request', side_effect=OSError('upload failed')):
+                with self.assertRaises(OSError):
+                    release.publish(api, 'me/fork', result, path)
+            self.assertEqual(api.releases['ui-check-abc']['body'], 'Result: blocked')
+            self.assertEqual(api.updates, [])
+            self.assertEqual(selection['state']['pending'], ['1.1.0'])
 
     def test_provider_credentials_are_absent_from_native_and_history_jobs(self):
         workflow = (SCRIPTS.parent / '.github/workflows/release-check.yml').read_text()

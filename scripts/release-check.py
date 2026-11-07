@@ -174,7 +174,7 @@ def discover(api, config, repository, *, head_tag='', base_tag='', force=False):
             if state['seen'].get(name) != sha and name not in state['pending']:
                 state['pending'].append(name)
         state['seen'].update(identities)
-    selected = head_tag or (state['pending'][0] if state['pending'] else tags[-1]['tag'] if force else '')
+    selected = head_tag or (tags[-1]['tag'] if force else state['pending'][0] if state['pending'] else '')
     if not selected:
         return dict(run=False, reason='No unprocessed upstream releases', state=state)
     index = next((i for i, tag in enumerate(tags) if tag['tag'] == selected), None)
@@ -496,6 +496,11 @@ def publish(api, repository, result, directory):
     upload(destination, archive, f'evidence-{run_id}.tar.gz')
     upload(destination, directory / 'report.json', f'report-{run_id}.json')
     upload(destination, directory / 'report.md', f'report-{run_id}.md')
+    body = (directory / 'report.md').read_text()
+    attempt_url = (f'https://github.com/{repository}/releases/download/{discovery["report_tag"]}/'
+                   f'report-{run_id}.json')
+    body += f'\nLatest published attempt: [{run_id}]({attempt_url}). Earlier attempt assets remain available below.\n'
+    api.request(f'repos/{repository}/releases/{destination["id"]}', dict(body=body), 'PATCH')
     state = discovery['state']
     # A blocked older release must not starve later releases. Explicit manual
     # replay/force retries it after credentials or the app profile are repaired.

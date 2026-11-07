@@ -77,7 +77,8 @@ enter a persisted queue, including hotfix tags with a lower version than the
 latest main release. Each published attempt advances that queue, including
 blocked attempts, so one unsupported release cannot starve the rest. Explicit
 `head_tag`/`base_tag` inputs replay older pairs; `force` retries the latest after
-configuration is repaired. Failed/blocked releases are never relabelled passed.
+configuration is repaired, even when older tags remain queued. An explicit head
+always takes precedence. Failed/blocked attempts are never relabelled passed.
 
 Proton currently uses stable version tags without GitHub release entries.
 DuckDuckGo's stable `+ios` tags exclude `-build+ios` TestFlight tags and macOS
@@ -120,8 +121,10 @@ Do not combine these jobs just to avoid the product artifact transfer.
 
 Each attempt stores JSON/Markdown reports and compressed source/test evidence
 as release assets on the *fork*, under `ui-check-<comparison hash>`. Asset names
-include run ID and attempt; existing attempts are not overwritten. The separate
-`ui-check-state` release retains discovery snapshots. These are engineering
+include run ID and attempt; existing attempts are not overwritten. The release
+description is refreshed only after the new attempt's evidence and
+reports have uploaded, and links to that attempt's immutable JSON report.
+The separate `ui-check-state` release retains discovery snapshots. These are engineering
 reports, not app releases. Compiled build products remain short-lived Actions
 artifacts; reports retain source identities and native `.xcresult`/media/logs.
 Evidence over GitHub's per-asset limit fails publication explicitly. Reports
@@ -137,3 +140,12 @@ tests cover provider transports. These checks do not prove a live model selected
 useful tests or that a full app built at a new historical release. Report that
 separately from static contracts, fixtures, generic Swift typechecking and the
 older fixed-baseline passes.
+
+For a public regression showcase, demonstrate at least one important assertion
+failing on a known faulty version or an explicitly labelled seeded fault and
+passing after correction. Keep the same assertion and reviewed fixtures in both
+runs; do not describe a seeded fault as an upstream defect. Execute the current
+pinned release workflow before claiming unattended generation works. Preserve
+successful native proof publicly beyond Actions retention, including source,
+harness and action identities, scenarios, result bundles and representative media.
+One working flagship adds more evidence than several unverified recurring jobs.

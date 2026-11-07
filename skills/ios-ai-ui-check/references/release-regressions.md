@@ -32,3 +32,11 @@ are distinct evidence. Missing provider credentials must block generation, never
 fall back to a provided baseline and claim release-generation success. The new
 orchestrator needs its own reviewed source pin; do not assume a prior published
 action release contains it.
+
+Before advertising regression detection, show an important unchanged assertion
+failing on a known faulty version or an explicitly labelled seeded fault and
+passing after correction. Keep fixture and harness differences reviewable.
+Archive successful native proof beyond CI retention. A controlled baseline fault
+demonstrates failure sensitivity; it does not establish live unattended planning.
+Keep inactive integrations as pinned references instead of expanding recurring
+maintenance before the flagship has complete evidence.
